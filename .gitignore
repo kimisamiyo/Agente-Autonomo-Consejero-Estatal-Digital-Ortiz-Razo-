@@ -1,0 +1,28 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Node dependencies
+node_modules/
+frontend/node_modules/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environment variables
+.env
+
+# Build outputs
+dist/
+build/
+frontend/dist/
+
+# OS metadata
+.DS_Store
+Thumbs.db
