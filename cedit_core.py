@@ -166,7 +166,7 @@ _log("[CEDIT] Cargando embeddings y Pinecone...")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=embeddings)
 
-llm = ChatGroq(temperature=0.2, model_name="llama-3.3-70b-versatile")
+llm = ChatGroq(temperature=0.2, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
 
 
 def load_cognitive_architecture() -> str:
@@ -193,6 +193,10 @@ prompt = ChatPromptTemplate.from_messages([
 AUDIT_STRUCTURE_INSTRUCTION = """
 IMPORTANTE — Estructura OBLIGATORIA para auditorías de planes/expedientes (responde en este orden exacto con estos encabezados markdown):
 
+ATENCIÓN SEGURIDAD PÚBLICA Y ÉTICA: Si el proyecto, plan o expediente contiene elementos ilegales, ilícitos, delictivos, fraudulentos o contrarios a la ética (ej. robos, desfalcos, sobornos, coimas, etc.), NO debes utilizar esta estructura ni inventar puntos fuertes. En su lugar, debes emitir un rechazo categórico inmediato y explicar que el Estado Peruano no financia ni avala actividades ilícitas bajo ninguna circunstancia.
+
+Si el plan es legal y legítimo, utiliza la siguiente estructura:
+
 ## Mi opinión como su consejero
 (Empatía, tono cercano, guía clara sobre lo que leíste del documento del usuario. 2-3 párrafos cortos.)
 
@@ -216,6 +220,75 @@ def _format_history(history: List[Dict], limit: int = 6) -> List:
     return formatted
 
 
+def is_technical_code_or_error(text: str) -> bool:
+    t = (text or "").lower()
+    
+    # 1. Firmas de errores de consola/programación o trazas de excepción
+    error_signatures = [
+        "traceback (most recent call last):",
+        "unboundlocalerror:",
+        "typeerror:",
+        "valueerror:",
+        "syntaxerror:",
+        "not found (error code:",
+        "xhrsendprocessor",
+        "post http://localhost",
+        "get http://localhost",
+        "404 (not found)",
+        "500 (internal server error)",
+        "502 (bad gateway)",
+        "at main.js",
+        "@ main.js",
+        "main.js?attr="
+    ]
+    if any(sig in t for sig in error_signatures):
+        return True
+        
+    # 2. Bloques de código explícitos o palabras clave de programación pura
+    programming_keywords = [
+        "import react",
+        "const [",
+        "const {",
+        "useState(",
+        "useEffect(",
+        "document.getelementbyid",
+        "public class ",
+        "def run_chat(",
+        "def process_user_message(",
+        "import sys",
+        "import os",
+        "npm install",
+        "pip install",
+        "app.post('/",
+        "app.listen("
+    ]
+    if any(kw in t for kw in programming_keywords):
+        return True
+        
+    # 3. Presencia de bloques de código markdown que parezcan código de programación
+    if "```" in text:
+        for block_lang in ["python", "javascript", "js", "typescript", "ts", "json", "html", "css", "cpp", "c#", "java", "sql"]:
+            if f"```{block_lang}" in t:
+                return True
+                
+    return False
+
+
+def is_illicit_or_harmful(text: str) -> bool:
+    t = (text or "").lower()
+    
+    # Palabras clave delictivas o ilícitas explícitas
+    illicit_words = [
+        "robar bancos", "robar un banco", "secuestrar", "asesinar", "matar a ", 
+        "lavado de activos", "lavar dinero", "coima", "soborno", "evadir impuestos", 
+        "defraudar al estado", "malversar", "desfalco", "hackear", "fabricar bombas", 
+        "atentado terrorista", "delinquir", "cometer fraude", "tráfico de influencias",
+        "cohecho", "colusión"
+    ]
+    
+    return any(word in t for word in illicit_words)
+
+
 def run_chat(
     message: str,
     history: Optional[List[Dict]] = None,
@@ -226,6 +299,45 @@ def run_chat(
 ) -> Dict[str, Any]:
     history = history or []
     scope = usage_scope or user_id
+    
+    if is_technical_code_or_error(message):
+        rejection_text = (
+            "**Buen día.**\n\n"
+            "Como **Consejero Estatal Digital (CEDIT)** "
+            "estoy especializado exclusivamente en **gestión pública peruana**, **derechos ciudadanos**, "
+            "normativas de **Invierte.pe** y directivas del **MEF**.\n\n"
+            "Lamentablemente, no esta dentro de mis topicos hablar de temas como depuración de codigo , "
+            "ni atender consultas informáticas ajenas a los trámites del Estado.\n\n"
+            "Le sugiero de manera muy respetuosa consultar con un especialista en desarrollo de software o recurrir a foros de tecnología (como Stack Overflow).\n\n"
+            "¿Tiene alguna consulta sobre procedimientos del Estado, licitaciones de OSCE o expedientes de inversión pública en la que pueda asistirle?"
+        )
+        return {
+            "response": rejection_text,
+            "mode": "chat",
+            "input_mode": "chat",
+            "usage": get_usage(scope),
+            "show_pdf": False,
+        }
+
+    if is_illicit_or_harmful(message):
+        rejection_text = (
+            "Como **Consejero Estatal Digital (CEDIT)**, estoy programado bajo los más estrictos principios de "
+            "**legalidad, ética pública y defensa de los recursos del Estado Peruano**.\n\n"
+            "Lamentablemente, el tema o propuesta que menciona involucra actividades ilegales o contrarias a la ley "
+            "(como el robo, desfalco o fraude). El Estado Peruano y sus instituciones (MEF, Invierte.pe) "
+            "no financian, avalan ni admiten bajo ninguna circunstancia planes orientados a cometer delitos o faltas éticas.\n\n"
+            "Le insto a reorientar cualquier propuesta hacia actividades legítimas y legales que beneficien a la sociedad "
+            "y cumplan con la normativa vigente. ¿Tiene alguna consulta sobre proyectos reales, legítimos y normativos "
+            "de inversión pública en los que pueda asistirle?"
+        )
+        return {
+            "response": rejection_text,
+            "mode": "chat",
+            "input_mode": "chat",
+            "usage": get_usage(scope),
+            "show_pdf": False,
+        }
+
     mode = detect_input_mode(message)
     if not skip_usage and mode in ("audit", "plan"):
         check_freemium(scope, mode)

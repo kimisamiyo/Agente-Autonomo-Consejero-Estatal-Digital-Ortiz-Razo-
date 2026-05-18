@@ -119,7 +119,7 @@ async def _apply_discord_profile():
     """Nombre visible + avatar institucional (CEDIT_FORCE_AVATAR=1 para repetir)."""
     if PROFILE_MARKER.exists() and os.getenv("CEDIT_FORCE_AVATAR") != "1":
         return
-    kwargs = {"global_name": BOT_DISPLAY_NAME}
+    kwargs = {"username": BOT_DISPLAY_NAME}
     if AVATAR_FILE.is_file():
         kwargs["avatar"] = AVATAR_FILE.read_bytes()
     try:
@@ -343,12 +343,18 @@ async def process_user_message(message: discord.Message, text: str):
                 queried_at=queried_at,
             )
         except FreemiumLimitError:
-            await thinking.delete()
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
             await message.channel.send(
                 embed=freemium_blocked_embed(message.author), view=MainMenuView()
             )
         except Exception as e:
-            await thinking.delete()
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
             await message.channel.send(f"Error al auditar: {e}")
         return
 
@@ -382,12 +388,18 @@ async def process_user_message(message: discord.Message, text: str):
             queried_at=queried_at,
         )
     except FreemiumLimitError:
-        await thinking.delete()
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
         await message.channel.send(
             embed=freemium_blocked_embed(message.author), view=MainMenuView()
         )
     except Exception as e:
-        await thinking.delete()
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
         await message.channel.send(f"Error: {e}")
 
 

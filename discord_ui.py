@@ -46,7 +46,6 @@ def query_attribution_block(
 
 
 def _footer_text(requested_by: Optional[discord.abc.User] = None) -> str:
-    now = datetime.datetime.now().strftime("%-d/%-m/%Y %-I:%M %p")
     try:
         now = datetime.datetime.now().strftime("%d/%m/%Y %I:%M %p")
     except ValueError:
@@ -136,6 +135,7 @@ def audit_bar_embed(
             color = PERU_DARK_RED
         else:
             status = f"Plan gratuito — **{count}/{limit}** auditorías · quedan **{remaining}** en este hilo"
+            color = PERU_RED
 
     mode_label = {
         "audit": "Barra de auditoría MEF",

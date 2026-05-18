@@ -18,7 +18,7 @@ def iniciar_chat():
 
     llm = ChatGroq(
         temperature=0.2, 
-        model_name="llama-3.3-70b-versatile"
+        model_name="meta-llama/llama-4-scout-17b-16e-instruct"
     )
 
     system_prompt = (

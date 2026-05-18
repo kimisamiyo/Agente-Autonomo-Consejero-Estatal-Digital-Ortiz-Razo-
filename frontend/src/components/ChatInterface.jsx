@@ -100,6 +100,12 @@ const ChatInterface = ({
         role: m.role === 'user' ? 'user' : 'assistant',
         content: m.fullContent || m.content,
       }));
+      const headersConfig = typeof apiHeaders === 'function' 
+        ? apiHeaders() 
+        : apiHeaders 
+          ? apiHeaders 
+          : { headers: { 'X-User-Id': userId } };
+
       const response = await axios.post(
         '/api/generate-pdf',
         {
@@ -109,7 +115,7 @@ const ChatInterface = ({
           history,
           user_id: userId,
         },
-        { responseType: 'blob', ...(apiHeaders ? apiHeaders() : { headers: { 'X-User-Id': userId } }) }
+        { responseType: 'blob', ...headersConfig }
       );
       const hash = response.headers['x-blockchain-hash'];
       if (hash) {
@@ -122,10 +128,26 @@ const ChatInterface = ({
       link.click();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail : 'Error al generar el PDF.';
-      if (err.response?.status === 402) alert('Límite freemium alcanzado en esta conversación.');
-      else alert(msg);
+      if (!err.response) {
+        // Error de red, conexión o excepción local de JavaScript en el navegador
+        alert('Error en cliente/conexión: ' + err.message);
+      } else if (err.response.data instanceof Blob) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const errorObj = JSON.parse(reader.result);
+            alert(errorObj?.detail || 'Error al generar el PDF.');
+          } catch (e) {
+            alert('Error del Servidor (Raw): ' + reader.result.substring(0, 250));
+          }
+        };
+        reader.readAsText(err.response.data);
+      } else {
+        const detail = err.response?.data?.detail;
+        const msg = typeof detail === 'string' ? detail : 'Error al generar el PDF.';
+        if (err.response?.status === 402) alert('Límite freemium alcanzado en esta conversación.');
+        else alert(msg);
+      }
     } finally {
       setGeneratingPdf(null);
     }
