@@ -17,6 +17,12 @@ __pycache__/
 
 # Environment variables
 .env
+.cedit_usage.json
+.cedit_avatar_synced
+.cedit_profile_synced
+.cedit_discord_sessions.json
+.cedit_pro_users.json
+.cedit_web_premium.json
 
 # Build outputs
 dist/

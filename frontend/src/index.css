@@ -30,3 +30,40 @@
   font-weight: 600;
   color: #1a1c1c;
 }
+
+/* CEDIT — animaciones sutiles */
+@keyframes cedit-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cedit-message-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cedit-mode-enter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cedit-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes cedit-pulse-btn {
+  0% { box-shadow: 0 0 0 0 rgba(185, 28, 28, 0.35); }
+  70% { box-shadow: 0 0 0 10px rgba(185, 28, 28, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(185, 28, 28, 0); }
+}
+@keyframes cedit-dropdown-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.cedit-fade-in { animation: cedit-fade-in 0.45s ease-out both; }
+.cedit-message-enter { animation: cedit-message-enter 0.4s ease-out both; }
+.cedit-mode-enter { animation: cedit-mode-enter 0.35s ease-out both; }
+.cedit-float { animation: cedit-float 3s ease-in-out infinite; }
+.cedit-card-hover:hover { transform: translateY(-2px); }
+.cedit-audit-glow { box-shadow: 0 0 0 1px rgba(173, 0, 23, 0.08), 0 8px 24px rgba(173, 0, 23, 0.06); }
+.cedit-pulse-btn { animation: cedit-pulse-btn 1.8s infinite; }
+.cedit-pdf-cta { animation: cedit-fade-in 0.5s ease-out 0.15s both; }
+.cedit-dropdown-enter { animation: cedit-dropdown-enter 0.2s ease-out both; }

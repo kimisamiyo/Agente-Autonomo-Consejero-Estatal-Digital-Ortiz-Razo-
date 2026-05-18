@@ -1,6 +1,13 @@
 import React from 'react';
 
-const Sidebar = ({ isOpen, toggleSidebar, history, onNewChat }) => {
+const MODE_BADGE = {
+  audit: { text: 'Auditoría activa', className: 'bg-red-100 text-red-800' },
+  plan: { text: 'Plan MEF', className: 'bg-amber-100 text-amber-900' },
+  freemium: { text: 'Límite alcanzado', className: 'bg-amber-200 text-amber-900' },
+};
+
+const Sidebar = ({ isOpen, toggleSidebar, history, onNewChat, sessionMode = 'chat' }) => {
+  const badge = MODE_BADGE[sessionMode];
   return (
     <>
       {/* Mobile Backdrop */}
@@ -38,6 +45,11 @@ const Sidebar = ({ isOpen, toggleSidebar, history, onNewChat }) => {
             <div>
               <h1 className="text-headline-md font-headline-md font-bold text-slate-800 tracking-tight">CEDIT</h1>
               <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">Gobierno Digital</p>
+              {badge && (
+                <span className={`inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.className}`}>
+                  {badge.text}
+                </span>
+              )}
             </div>
           </div>
 

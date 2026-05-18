@@ -10,7 +10,7 @@ export default defineConfig({
       '/n8n': {
         target: 'http://localhost:5678',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/n8n/, '/webhook-test'),
+        rewrite: (path) => path.replace(/^\/n8n/, '/webhook-test/cedit'),
       },
       // Proxy para FastAPI (evita CORS en descargas/cargas de archivos)
       '/api': {

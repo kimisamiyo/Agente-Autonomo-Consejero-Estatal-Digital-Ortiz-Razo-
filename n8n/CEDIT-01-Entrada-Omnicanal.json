@@ -1,0 +1,255 @@
+{
+  "name": "CEDIT 01 — Entrada Omnicanal (Web + Discord)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🏛️ CEDIT — FLUJO 1 (IMPORTAR PRIMERO)\n\n**Entrada:** Webhook `POST /cedit/chat`\n\n**Camino:**\n1. Normalizar payload (mensaje, historial, canal, user_id)\n2. ¿Viene archivo PDF? → FastAPI `/api/upload`\n3. Si no → FastAPI `/api/chat`\n4. ¿Modo auditoría? → llamar **Flujo 2** (blockchain)\n5. Responder al cliente (web o Discord vía n8n)\n\n**Requiere:** FastAPI en puerto 8000 + importar Flujo 2",
+        "height": 320,
+        "width": 420,
+        "color": 5
+      },
+      "id": "sticky-intro",
+      "name": "📌 LEER PRIMERO",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-120, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cedit/chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-cedit-chat",
+      "name": "🌐 Webhook Chat",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [380, 300],
+      "webhookId": "cedit-omnicanal-chat"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "message",
+              "value": "={{ $json.body?.message || $json.message || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "history",
+              "value": "={{ $json.body?.history || $json.history || [] }}",
+              "type": "array"
+            },
+            {
+              "id": "a3",
+              "name": "canal",
+              "value": "={{ $json.body?.canal || $json.canal || 'web' }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "user_id",
+              "value": "={{ $json.body?.user_id || $json.user_id || 'web_anonymous' }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "is_audit_register",
+              "value": "={{ ($json.body?.message || '').includes('[REGISTRO BLOCKCHAIN]') }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-normalize",
+      "name": "⚙️ Normalizar payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.is_audit_register }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-blockchain-only",
+      "name": "🔗 ¿Solo registro blockchain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5678/webhook-test/cedit/blockchain",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, user_id: $json.user_id, canal: $json.canal }) }}",
+        "options": {}
+      },
+      "id": "http-blockchain",
+      "name": "⛓️ → Flujo 2 Blockchain",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-User-Id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, history: $json.history, canal: $json.canal, user_id: $json.user_id }) }}",
+        "options": {}
+      },
+      "id": "http-fastapi-chat",
+      "name": "🧠 FastAPI /api/chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "audit",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "if-audit-mode",
+      "name": "📋 ¿Modo auditoría?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5678/webhook-test/cedit/blockchain",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: '[REGISTRO BLOCKCHAIN] ' + ($json.filename || 'auditoria'), user_id: $('⚙️ Normalizar payload').item.json.user_id, canal: $('⚙️ Normalizar payload').item.json.canal, audit_hash: $json.blockchain_payload }) }}",
+        "options": { "continueOnFail": true }
+      },
+      "id": "http-blockchain-after-audit",
+      "name": "⛓️ Registrar auditoría",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response: $json.display || $json.response, mode: $json.mode, usage: $json.usage, show_pdf: $json.show_pdf, opinion: $json.opinion, strengths: $json.strengths } }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "✅ Responder al cliente",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1820, 400]
+    },
+    {
+      "parameters": {
+        "content": "## 🔀 RAMAS\n\n**Arriba (true):** mensaje solo blockchain → Flujo 2\n\n**Abajo (false):** chat normal → FastAPI\n\nSi `mode=audit` → registrar en blockchain antes de responder",
+        "height": 200,
+        "width": 280,
+        "color": 4
+      },
+      "id": "sticky-branches",
+      "name": "📌 Ramas",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [820, 520]
+    }
+  ],
+  "connections": {
+    "🌐 Webhook Chat": {
+      "main": [[{ "node": "⚙️ Normalizar payload", "type": "main", "index": 0 }]]
+    },
+    "⚙️ Normalizar payload": {
+      "main": [[{ "node": "🔗 ¿Solo registro blockchain?", "type": "main", "index": 0 }]]
+    },
+    "🔗 ¿Solo registro blockchain?": {
+      "main": [
+        [{ "node": "⛓️ → Flujo 2 Blockchain", "type": "main", "index": 0 }],
+        [{ "node": "🧠 FastAPI /api/chat", "type": "main", "index": 0 }]
+      ]
+    },
+    "⛓️ → Flujo 2 Blockchain": {
+      "main": [[{ "node": "✅ Responder al cliente", "type": "main", "index": 0 }]]
+    },
+    "🧠 FastAPI /api/chat": {
+      "main": [[{ "node": "📋 ¿Modo auditoría?", "type": "main", "index": 0 }]]
+    },
+    "📋 ¿Modo auditoría?": {
+      "main": [
+        [{ "node": "⛓️ Registrar auditoría", "type": "main", "index": 0 }],
+        [{ "node": "✅ Responder al cliente", "type": "main", "index": 0 }]
+      ]
+    },
+    "⛓️ Registrar auditoría": {
+      "main": [[{ "node": "✅ Responder al cliente", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": [{ "name": "CEDIT" }]
+}
