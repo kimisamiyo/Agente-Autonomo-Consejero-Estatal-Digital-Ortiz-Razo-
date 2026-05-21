@@ -4,6 +4,7 @@ Núcleo compartido CEDIT — misma lógica para Web (FastAPI), Discord y n8n.
 import os
 import io
 import json
+import re
 import hashlib
 import datetime
 from typing import List, Dict, Optional, Tuple, Any
@@ -23,14 +24,42 @@ load_dotenv()
 FREE_LIMIT = int(os.getenv("CEDIT_FREE_LIMIT", "10"))
 USAGE_FILE = os.path.join(os.path.dirname(__file__), ".cedit_usage.json")
 
-# Palabras que activan modo auditoría / plan MEF
-AUDIT_INPUT_KEYWORDS = [
-    "plan de inversión", "plan de inversion", "expediente técnico", "expediente tecnico",
-    "invierte.pe", "invierte pe", "perfil de inversión", "perfil de inversion",
-    "formulación", "formulacion", "reestructuración", "reestructuracion",
-    "auditar", "auditoría", "auditoria", "dictamen", "mef", "ficha técnica",
-    "ficha tecnica", "componente", "snip", "viabilidad", "presupuesto multianual",
+# Señales fuertes: el usuario presenta un plan/expediente y pide asesoramiento (consume cupo)
+PLAN_AUDIT_STRONG_KEYWORDS = [
+    "auditar", "auditoría", "auditoria", "audita ", "audita mi", "audita el",
+    "revisar mi plan", "revisar el plan", "revisar mi expediente", "revisar expediente",
+    "analiza el pdf", "analiza mi pdf", "analiza el archivo", "analiza mi plan",
+    "dictamen técnico", "dictamen tecnico", "dictamen de",
+    "mi plan de inversión", "mi plan de inversion", "nuestro plan de inversión",
+    "mi expediente técnico", "mi expediente tecnico", "mi proyecto de inversión",
+    "mi proyecto de inversion", "nuestro proyecto", "formular mi plan",
+    "presentar al mef", "aprobación en el mef", "aprobacion en el mef",
+    "ficha técnica del proyecto", "reestructuración del", "reestructuracion del",
 ]
+
+# Contexto del proyecto propio (plan en elaboración, no consulta genérica)
+PLAN_OWNERSHIP_PHRASES = [
+    "mi plan", "mi expediente", "mi proyecto", "nuestro plan", "nuestro proyecto",
+    "el plan que", "este plan", "este expediente", "este proyecto",
+    "presupuesto del proyecto", "costo del proyecto", "cronograma del proyecto",
+]
+
+# Dudas de ciudadano / consulta normativa general (NO consumen cupo)
+CITIZEN_GENERAL_KEYWORDS = [
+    "ciudadano", "ciudadana", "derecho", "derechos", "reclamo", "queja", "denuncia",
+    "silencio administrativo", "gob.pe", "transparencia", "información pública",
+    "informacion publica", "defensoría", "defensoria", "contraloría", "contraloria",
+    "carta al estado", "carta formal", "solicitud de información",
+    "trámite ciudadano", "tramite ciudadano", "servidor público me negó",
+]
+
+# Preguntas conceptuales (qué/cómo/cuál) sin presentar un plan propio
+CONCEPTUAL_QUESTION_STARTS = (
+    "qué es", "que es", "qué son", "que son", "cuál es", "cual es",
+    "cuáles son", "cuales son", "cómo es", "como es", "cómo puedo", "como puedo",
+    "explícame", "explicame", "dime qué", "dime que", "en qué consiste",
+    "diferencia entre", "ejemplo de", "pasos para", "requisitos para",
+)
 
 PLAN_RESPONSE_KEYWORDS = [
     "plan de", "expediente", "dictamen", "presupuesto", "invierte.pe",
@@ -38,7 +67,10 @@ PLAN_RESPONSE_KEYWORDS = [
 ]
 
 AUDIT_SECTION_MARKERS = {
-    "opinion": ["## mi opinión", "## mi opinion", "## opinión del consejero", "## opinion del consejero"],
+    "opinion": [
+        "## mi opinión", "## mi opinion", "## mi opinión como cedit", "## mi opinion como cedit",
+        "## opinión del consejero", "## opinion del consejero",
+    ],
     "strengths": ["## puntos fuertes", "## fortalezas", "## aspectos positivos"],
     "dictamen": ["## dictamen técnico", "## dictamen tecnico", "## auditoría", "## auditoria"],
 }
@@ -57,6 +89,14 @@ def _load_usage() -> Dict[str, int]:
 def _save_usage(data: Dict[str, int]) -> None:
     with open(USAGE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f)
+
+
+def reset_usage(scope_id: str) -> Dict[str, Any]:
+    """Borra el contador freemium de un scope (p. ej. userId web compartido)."""
+    data = _load_usage()
+    data.pop(scope_id, None)
+    _save_usage(data)
+    return get_usage(scope_id)
 
 
 def get_usage(scope_id: str) -> Dict[str, Any]:
@@ -95,15 +135,116 @@ class FreemiumLimitError(Exception):
     pass
 
 
-def detect_input_mode(message: str, has_pdf: bool = False) -> str:
+def is_citizen_or_general_normative(message: str) -> bool:
+    """Consultas de ciudadanía o conceptos MEF/Invierte.pe sin plan propio."""
+    t = (message or "").lower().strip()
+    if not t:
+        return False
+    if any(k in t for k in CITIZEN_GENERAL_KEYWORDS):
+        return True
+    if t.startswith(CONCEPTUAL_QUESTION_STARTS):
+        if not any(p in t for p in PLAN_OWNERSHIP_PHRASES):
+            return True
+    if "?" in t and any(s in t for s in CONCEPTUAL_QUESTION_STARTS):
+        if not any(p in t for p in PLAN_OWNERSHIP_PHRASES):
+            if not any(k in t for k in ("auditar", "auditoría", "auditoria", "audita")):
+                return True
+    return False
+
+
+def is_plan_audit_request(message: str, has_pdf: bool = False) -> bool:
+    """True si el usuario plantea un plan/expediente y busca asesoramiento (cuenta cupo)."""
     if has_pdf:
-        return "audit"
+        return True
     t = (message or "").lower()
-    if any(k in t for k in AUDIT_INPUT_KEYWORDS):
-        if any(x in t for x in ("auditar", "auditoría", "auditoria", "revisar expediente", "analiza el pdf", "analiza el archivo")):
-            return "audit"
-        return "plan"
-    return "chat"
+    if is_citizen_or_general_normative(message):
+        return False
+    if any(k in t for k in PLAN_AUDIT_STRONG_KEYWORDS):
+        return True
+    has_ownership = any(p in t for p in PLAN_OWNERSHIP_PHRASES)
+    has_plan_context = any(
+        x in t
+        for x in (
+            "plan de inversión", "plan de inversion", "expediente técnico", "expediente tecnico",
+            "invierte.pe", "perfil de inversión", "perfil de inversion", "formulación",
+            "formulacion", "presupuesto multianual", "ficha técnica", "viabilidad del proyecto",
+        )
+    )
+    if has_ownership and has_plan_context:
+        return True
+    if has_ownership and any(
+        x in t for x in ("presupuesto", "viabilidad", "snip", "componente", "dictamen", "mef")
+    ):
+        return True
+    return False
+
+
+def detect_input_mode(message: str, has_pdf: bool = False) -> str:
+    """
+    Modo de respuesta/prompt. 'chat' = ciudadano o consulta normativa sin plan propio.
+    """
+    if not is_plan_audit_request(message, has_pdf=has_pdf):
+        return "chat"
+    t = (message or "").lower()
+    if has_pdf or any(
+        x in t
+        for x in (
+            "auditar", "auditoría", "auditoria", "audita", "dictamen",
+            "analiza el pdf", "analiza mi pdf", "revisar expediente",
+        )
+    ):
+        return "audit"
+    return "plan"
+
+
+def _history_indicates_audit_session(history: Optional[List[Dict]] = None) -> bool:
+    """Historial con respuesta de auditoría previa (p. ej. tras subir PDF)."""
+    markers = (
+        "## mi opinión",
+        "## dictamen",
+        "dictamen técnico de auditoría",
+        "dictamen tecnico de auditoria",
+        "## puntos fuertes",
+        "documento recibido",
+        "revisando expediente",
+    )
+    for m in history or []:
+        role = (m.get("role") or "").lower()
+        if role not in ("assistant", "ai", "bot"):
+            continue
+        if (m.get("mode") or "").lower() in ("audit", "plan"):
+            return True
+        c = (m.get("content") or "").lower()
+        if any(marker in c for marker in markers):
+            return True
+    return False
+
+
+def is_audit_session_active(
+    session_mode: Optional[str] = None,
+    history: Optional[List[Dict]] = None,
+) -> bool:
+    """True si el usuario ya entró en modo auditoría/plan y cada mensaje debe contar."""
+    sm = (session_mode or "").lower().strip()
+    if sm in ("audit", "plan"):
+        return True
+    return _history_indicates_audit_session(history)
+
+
+def consumes_freemium_credit(
+    message: str,
+    has_pdf: bool = False,
+    mode: Optional[str] = None,
+    session_mode: Optional[str] = None,
+    history: Optional[List[Dict]] = None,
+) -> bool:
+    """Solo auditorías de planes/expedientes consumen las 10 consultas gratis."""
+    if is_audit_session_active(session_mode, history):
+        return True
+    resolved = mode or detect_input_mode(message, has_pdf=has_pdf)
+    if resolved == "chat":
+        return False
+    return is_plan_audit_request(message, has_pdf=has_pdf)
 
 
 def detect_response_mode(content: str, is_audit: bool = False) -> str:
@@ -121,6 +262,175 @@ def detect_response_mode(content: str, is_audit: bool = False) -> str:
 def should_offer_pdf(content: str, is_audit: bool = False) -> bool:
     mode = detect_response_mode(content, is_audit=is_audit)
     return mode in ("audit", "plan")
+
+
+_DATA_GAP_CHECKS: List[Tuple[str, str, List[str]]] = [
+    ("presupuesto total y desglose (soles, componentes)", r"presupuesto|costo\s+total|monto|s/|soles|financiamiento", ["presupuesto", "costo", "monto", "soles", "s/"]),
+    ("plazo de ejecución y cronograma", r"cronograma|plazo|mes(es)?\s+de\s+ejecuci|duraci[oó]n", ["cronograma", "plazo", "meses", "duración"]),
+    ("ubicación (ubigeo, región, provincia, distrito)", r"ubigeo|ubicaci[oó]n|distrito|provincia|departamento", ["ubigeo", "ubicación", "distrito", "provincia"]),
+    ("entidad ejecutora y unidad formuladora", r"entidad\s+ejecutora|formulador|gerencia|municipalidad|ministerio", ["entidad ejecutora", "formulador", "municipalidad"]),
+    ("población beneficiaria e indicadores", r"beneficiar|indicador|poblaci[oó]n\s+meta|hogares", ["beneficiario", "indicador", "población"]),
+    ("objetivos, productos y componente Invierte.pe", r"objetivo|producto|componente|invierte", ["objetivo", "producto", "componente", "invierte"]),
+    ("código SNIP o CUI del proyecto", r"snip|cui|\bcodigo\b", ["snip", "cui"]),
+]
+
+
+def _combined_audit_text(text: str, history: Optional[List[Dict]] = None) -> str:
+    parts = [text or ""]
+    for h in history or []:
+        parts.append(h.get("content") or "")
+    return " ".join(parts).lower()
+
+
+def detect_project_data_gaps(text: str, history: Optional[List[Dict]] = None) -> List[str]:
+    """Detecta huecos de información para sugerir preguntas contextuales."""
+    blob = _combined_audit_text(text, history)
+    gaps = []
+    for label, pattern, keywords in _DATA_GAP_CHECKS:
+        if not re.search(pattern, blob, re.I) and not any(k in blob for k in keywords):
+            gaps.append(label)
+    return gaps[:4]
+
+
+def locale_instruction(locale: str = "es") -> str:
+    return LOCALE_PROMPTS[_normalize_locale(locale)]
+
+
+def _parse_score_json(raw: str) -> Dict[str, Any]:
+    """Extrae JSON de la respuesta del modelo de puntuación MEF."""
+    default = {
+        "approval_index": 0,
+        "document_only_index": 0,
+        "estimated_with_official_plan": 0,
+        "strengths": [],
+        "missing_points": [],
+        "recommendations": [],
+        "summary": "",
+    }
+    if not raw:
+        return default
+    match = re.search(r"\{[\s\S]*\}", raw)
+    if not match:
+        return default
+    try:
+        data = json.loads(match.group())
+        for k in default:
+            if k in data:
+                default[k] = data[k]
+        for field in ("approval_index", "document_only_index", "estimated_with_official_plan"):
+            try:
+                default[field] = max(0, min(100, int(float(default[field]))))
+            except (TypeError, ValueError):
+                default[field] = 0
+        for field in ("strengths", "missing_points", "recommendations"):
+            if not isinstance(default[field], list):
+                default[field] = [str(default[field])] if default[field] else []
+        return default
+    except json.JSONDecodeError:
+        return default
+
+
+def score_document_against_mef(
+    document_text: str,
+    filename: str = "documento.pdf",
+    normative_ctx: str = "",
+) -> Dict[str, Any]:
+    """
+    Puntúa un borrador/expediente según criterios MEF/Invierte.pe (índice 0-100).
+    """
+    excerpt = (document_text or "")[:8000]
+    score_prompt = f"""
+Eres evaluador técnico del MEF (Perú) para planes de inversión pública en Invierte.pe.
+Analiza el documento "{filename}" y responde ÚNICAMENTE con un JSON válido (sin markdown):
+{{
+  "approval_index": <entero 0-100, calidad actual global del material>,
+  "document_only_index": <entero 0-100, si solo se presentara este borrador al MEF>,
+  "estimated_with_official_plan": <entero 0-100, probabilidad si genera plan técnico oficial CEDIT de ~10 págs>,
+  "strengths": ["punto fuerte 1", "..."],
+  "missing_points": ["brecha 1", "..."],
+  "recommendations": ["qué debería aportar el usuario 1", "..."],
+  "summary": "frase breve"
+}}
+Criterios: identificación, problema, solución, presupuesto, cronograma, beneficiarios, riesgos, marco normativo, coherencia SNIP/componente.
+Contexto normativo:
+{normative_ctx[:3000]}
+
+DOCUMENTO:
+{excerpt}
+"""
+    messages = [
+        HumanMessage(content="Eres auditor MEF. Solo JSON, sin texto extra."),
+        HumanMessage(content=score_prompt),
+    ]
+    raw = llm.invoke(messages).content
+    parsed = _parse_score_json(raw)
+    parsed["meets_expediente_threshold"] = parsed["estimated_with_official_plan"] >= MEF_APPROVAL_THRESHOLD
+    return parsed
+
+
+def format_mef_score_markdown(score: Dict[str, Any]) -> str:
+    """Bloque markdown para mostrar en chat tras subir documento."""
+    doc_i = score.get("document_only_index", 0)
+    est_i = score.get("estimated_with_official_plan", 0)
+    lines = [
+        "\n\n## Índice de aprobación MEF (estimado por CEDIT)\n",
+        f"- **Con su documento actual:** aprox. **{doc_i}%** de alineación con parámetros MEF/Invierte.pe.",
+        f"- **Si genera el Plan Técnico Oficial (PDF) con CEDIT:** estimación **{est_i}%**.",
+    ]
+    if score.get("meets_expediente_threshold"):
+        lines.append(f"- ✅ Supera el umbral de **{MEF_APPROVAL_THRESHOLD}%** para figurar en **Mis expedientes** tras generar el PDF.")
+    else:
+        lines.append(f"- Para **Mis expedientes** se requiere **≥{MEF_APPROVAL_THRESHOLD}%** tras el plan oficial.")
+    if score.get("strengths"):
+        lines.append("\n### Fortalezas de su documento\n")
+        lines.extend(f"- {s}" for s in score["strengths"][:6])
+    if score.get("missing_points"):
+        lines.append("\n### Puntos que faltan o deben reforzarse\n")
+        lines.extend(f"- {s}" for s in score["missing_points"][:8])
+    if score.get("recommendations"):
+        lines.append("\n### Qué podría aportar para mejorar\n")
+        lines.extend(f"- {s}" for s in score["recommendations"][:6])
+    if score.get("summary"):
+        lines.append(f"\n*{score['summary']}*")
+    return "\n".join(lines)
+
+
+def append_followup_questions(content: str, gaps: List[str]) -> str:
+    if not gaps or "## para alimentar" in content.lower():
+        return content
+    lines = ["\n\n## Para alimentar su plan técnico (PDF)\n"]
+    prompts = [
+        f"¿Podría contarme más sobre el **{g}** de su proyecto?",
+        f"¿Qué detalle tiene del **{g}** para incorporarlo al expediente MEF?",
+    ]
+    for i, g in enumerate(gaps):
+        lines.append(f"- {prompts[i % 2]}")
+    lines.append(
+        "\n*Sus respuestas enriquecerán el **Plan Técnico Oficial (PDF)** de ~9-10 páginas.*"
+    )
+    return content + "\n".join(lines)
+
+
+def get_pdf_document_stats(pdf_bytes: bytes) -> Tuple[str, int, int]:
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    if reader.is_encrypted:
+        try:
+            reader.decrypt("")
+        except Exception:
+            raise ValueError("El PDF está protegido con contraseña. Suba una versión sin bloqueo.")
+    pages = len(reader.pages)
+    parts = []
+    for page in reader.pages:
+        extracted = page.extract_text()
+        if extracted:
+            parts.append(extracted)
+    text = "\n".join(parts).strip()
+    if not text:
+        raise ValueError(
+            "No se pudo extraer texto del PDF. Puede ser un escaneo sin OCR. "
+            "Use un PDF con texto seleccionable o exporte desde Word/Invierte.pe."
+        )
+    return text, pages, len(text)
 
 
 def parse_audit_sections(content: str) -> Dict[str, str]:
@@ -190,22 +500,314 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
+CEDIT_IDENTITY_FIRST_TURN_ES = """
+IDENTIDAD — Primera respuesta (o saludo / ¿quién eres?):
+- Preséntate UNA sola vez en **español**: "Soy **CEDIT**, su Consejero Estatal Digital. Mi función es **guiar al ciudadano** en trámites y derechos del Estado, y **ayudar a servidores públicos** a formular **planes de inversión viables y rentables** ante el **MEF** e **Invierte.pe**."
+- Luego responde al fondo de la consulta en español.
+"""
+
+CEDIT_IDENTITY_FIRST_TURN_QU = """
+IDENTIDAD — Ñawpaq kutichiy (o napay / ¿pitaj kanki?):
+- Preséntate UNA sola vez **llapan runasimipi (quechua)** — mana español rimaytachu:
+  "Ñuqaqa **CEDIT** kani, Perú llaqtapa Digital Amachiq (Consejero Estatal Digital). Llank'ayniqa llaqtayuq runata purichinapi yanapayta, kamachiq runakunatapas **MEF**wan **Invierte.pe**wan allin inversión plan wakichiyta."
+- Chay qipan usqhaylla runapa tapunanta quechua nisqapi kutichiy.
+"""
+
+CEDIT_IDENTITY_FIRST_TURN_AY = """
+IDENTIDAD — Nayra kutichawi (jan ukax napay / ¿kuna runas thaqha?):
+- Preséntate UNA sola vez **taqi arut aymara** — jani español arut:
+  "Nayax **CEDIT** satawa, Perú markan Digital Amuyt'iri. Lurañan llaqta runanakar puriyt'apxta, kamachirinakar **MEF** ukat **Invierte.pe** ukan sum inversión plan lurañ yanapt'apxta."
+- Ukhamaraki jumana jiskt'äwim aymara arut kutichipxama.
+"""
+
+CEDIT_IDENTITY_FIRST_BY_LOCALE = {
+    "es": CEDIT_IDENTITY_FIRST_TURN_ES,
+    "qu": CEDIT_IDENTITY_FIRST_TURN_QU,
+    "ay": CEDIT_IDENTITY_FIRST_TURN_AY,
+}
+
+CEDIT_IDENTITY_ONGOING = """
+IDENTIDAD — Conversación en curso:
+- Eres **CEDIT**. **PROHIBIDO** repetir la presentación larga ni abrir en español si el idioma activo no es español.
+- Ve directo al contenido en el idioma activo. Solo preséntate de nuevo si preguntan explícitamente quién eres (en ese idioma, una vez).
+"""
+
+LOCALE_PROMPTS = {
+    "es": (
+        "IDIOMA ACTIVO: **español** (Perú). Toda la respuesta en español."
+    ),
+    "qu": (
+        "IDIOMA ACTIVO: **QUECHUA (Runasimi)** — OBLIGATORIO, sin excepción.\n"
+        "- Escribe **todo** el mensaje en quechua sureño peruano (ortografía escolar): saludo, explicación, preguntas y viñetas.\n"
+        "- **PROHIBIDO** mezclar oraciones en español (no digas «Soy CEDIT», «Mi función es», «¿En qué puedo ayudarle?»).\n"
+        "- Solo acrónimos oficiales entre paréntesis si no hay palabra en quechua: (MEF), (Invierte.pe), (SNIP).\n"
+        "- Si el usuario escribe en quechua, responde **100% en quechua**."
+    ),
+    "ay": (
+        "IDIOMA ACTIVO: **AYMARA** — OBLIGATORIO, sin excepción.\n"
+        "- Escribe **taqi** kutichawi aymara arut (ortografía escolar peruana).\n"
+        "- **Janiw** español arut jikxatañapaka (jan «Soy CEDIT», «¿En qué puedo ayudarle?»).\n"
+        "- Solo acrónimos entre paréntesis: (MEF), (Invierte.pe).\n"
+        "- Jiskt'äwi aymara arut ukham jiskt'ätaxa, **100% aymara** kutichipxama."
+    ),
+}
+
+
+def _history_has_assistant_turn(history: Optional[List[Dict]]) -> bool:
+    for m in history or []:
+        role = (m.get("role") or "").lower()
+        if role in ("assistant", "ai", "bot"):
+            return True
+    return False
+
+
+def _user_asks_who_are_you(message: str) -> bool:
+    t = (message or "").lower()
+    triggers = (
+        "quién eres", "quien eres", "qué eres", "que eres", "quién es cedit",
+        "presentate", "preséntate", "who are you", "piq runa kanki", "kuna runa kanki",
+        "pitaj kanki", "ima sutiyki", "kuna runa kanki", "kuna sutim",
+    )
+    return any(x in t for x in triggers)
+
+
+def _normalize_locale(locale: str = "es") -> str:
+    key = (locale or "es").lower()[:2]
+    return key if key in LOCALE_PROMPTS else "es"
+
+
+def cedit_identity_instruction(
+    history: Optional[List[Dict]] = None,
+    message: str = "",
+    locale: str = "es",
+) -> str:
+    key = _normalize_locale(locale)
+    first = not _history_has_assistant_turn(history) or _user_asks_who_are_you(message)
+    block = CEDIT_IDENTITY_FIRST_BY_LOCALE.get(key, CEDIT_IDENTITY_FIRST_TURN_ES) if first else CEDIT_IDENTITY_ONGOING
+    return block + "\n" + locale_instruction(key)
+
+
+REJECTION_OUT_OF_SCOPE = {
+    "technical": {
+        "es": (
+            "Con gusto le atiendo en lo que es mi especialidad.\n\n"
+            "Soy **CEDIT**, su Consejero Estatal Digital del Perú. Puedo **guiarle en trámites y derechos "
+            "ciudadanos**, aclarar **normativa** (**MEF**, **Invierte.pe**, **OSCE**) y apoyar **planes de "
+            "inversión pública** conforme a la ley.\n\n"
+            "Sobre programación, depuración de código o errores técnicos de software, **no puedo ayudarle**; "
+            "ese tema queda fuera de la gestión pública que regula mi trabajo.\n\n"
+            "**¿Qué desea hacer ahora?** Por ejemplo: consultar un trámite, un requisito normativo o un "
+            "expediente de inversión — con gusto le oriento."
+        ),
+        "qu": (
+            "Sumaqta yanapayta atiyniyuq kachkani.\n\n"
+            "Ñuqaqa **CEDIT** kani, Perú llaqtapa Digital Amachiq. Llaqtayuq runapa **kamachiy puriykunapi**, "
+            "**hayñinkunapi**, **MEF** / **Invierte.pe** / **OSCE** **kamachikuykunapi** chaymanta **inversión "
+            "plan** allin wakichiyta yanapayta atiyni.\n\n"
+            "Programación, código allichay utaq software pantaykunamantaqa **manam yanapayta atiynichu**; "
+            "chayqa mana kamachiq llaqtapa llank'ayniyuqchu.\n\n"
+            "**¿Imatataq kunan ruwayta munanki?** Ejemplopaq: huk trámite tapuy, normativa utaq inversión "
+            "expediente — kusisqa purichiyta qonqayki."
+        ),
+        "ay": (
+            "Suma juk'amp yanapt'asmat jumanakaruxa.\n\n"
+            "Nayax **CEDIT** satawa, Perú markan Digital Amuyt'iri. Jumanakar **kamachin lurañ puriyt'apxta**, "
+            "**hayk'apt'awinakapaxa**, **MEF** / **Invierte.pe** / **OSCE** **kamachinakapaxa** ukat **inversión "
+            "plan** sum lurañata yanapt'asmat.\n\n"
+            "Programación, código alañ ukax **janw yanapt'kaspati**: janiw kamachin markan lurañanakapax utjkiti.\n\n"
+            "**¿Kunats jumax kunjam lurañ munasmat?** Uka: mä trámite jiskt'äwi, kamachi ukax inversión "
+            "expediente — suma puriyt'apxta."
+        ),
+    },
+    "illicit": {
+        "es": (
+            "Le agradezco su mensaje. Soy **CEDIT**, Consejero Estatal Digital del Perú.\n\n"
+            "Mi utilidad para usted es **orientar trámites legales**, aclarar **derechos ciudadanos** y apoyar "
+            "**planes de inversión pública** serios ante el **MEF** e **Invierte.pe**, siempre con **legalidad** "
+            "y ética pública.\n\n"
+            "Sobre lo que plantea, **no puedo ayudarle**: toca conductas ilegales o contrarias al interés del "
+            "Estado. Esas materias no caben en la gestión pública ni en expedientes que evalúa el sector público.\n\n"
+            "**¿Qué desea hacer en su lugar?** Si lo prefiere, retomemos un proyecto legítimo, un trámite o una "
+            "consulta normativa en la que sí pueda asistirle."
+        ),
+        "qu": (
+            "Qanpa willakuyniykita agradeceykuy. Ñuqaqa **CEDIT** kani, Perú llaqtapa Digital Amachiq.\n\n"
+            "Yanapayta atiyniyqa **kamachisqa trámitekuna purichiy**, **llaqtayuq hayñinkuna** willayta chaymanta "
+            "**MEF**wan **Invierte.pe**wan **inversión plan** allin wakichiy, **kamachisqa** kasqanpi.\n\n"
+            "Qam willasqaykimantaqa **manam yanapayta atiynichu**: mana allin, mana kamachisqa luraqkunam. "
+            "Chaykunqa mana kamachiq llaqtapa llank'ayniyuqchu.\n\n"
+            "**¿Imatataq wak munanki?** Allin proyecto, trámite utaq normativa tapuy — chaypi kusisqa yanapayta atiyni."
+        ),
+        "ay": (
+            "Juman aruskipäwim juk'amp yuspagara. Nayax **CEDIT** satawa, Perú markan Digital Amuyt'iri.\n\n"
+            "Yanapt'asmat jumanakar **kamachin lurañ puriyt'apxta**, **llaqta runanakan hayk'apt'awinakapaxa** ukat "
+            "**MEF** ukat **Invierte.pe** ukan **inversión plan** sum lurañata, **kamachin** sata.\n\n"
+            "Juman uñt'ayatax **janw yanapt'kaspati**: jan kamachin, jan sum lurañawinakawa. "
+            "Ukax janiw kamachin markan lurañanakapax utjkiti.\n\n"
+            "**¿Kunats jumax wak munasmat?** Suma proyecto, trámite ukax kamachi jiskt'äwi — ukham yanapt'asmat."
+        ),
+    },
+}
+
+REJECTION_IN_AUDIT_SESSION = {
+    "technical": {
+        "es": (
+            "Gracias por seguir en **modo auditoría** de su expediente.\n\n"
+            "Soy **CEDIT**. Aquí mi utilidad es revisar su **plan o expediente** según **MEF** e **Invierte.pe** "
+            "(viabilidad, costos, brechas normativas, datos del proyecto).\n\n"
+            "Sobre **programación, código o errores de software**, **no puedo ayudarle** en esta sesión; "
+            "no forma parte del dictamen de inversión pública.\n\n"
+            "**¿Qué aspecto de su expediente desea revisar ahora?** Por ejemplo: viabilidad, financiamiento, "
+            "componente Invierte.pe o datos faltantes para el dictamen."
+        ),
+        "qu": (
+            "Gracias, **qhaway modo**niykipi kachkanki.\n\n"
+            "Ñuqaqa **CEDIT** kani. Kaypi **MEF** / **Invierte.pe** nisqapi planniyki qhawayta yanapayta atiyni "
+            "(allin ruway, qullqiy, kamachikuy pantasqakuna, proyecto willakuy).\n\n"
+            "**Programación** utaq **código**mantaqa **manam yanapayta atiynichu**; mana qhaway dictamenpa "
+            "llank'ayniyuqchu.\n\n"
+            "**¿Imataq kunan expedientenmanta qhawayta munanki?** Ejemplopaq: allin ruway, qullqiy, Invierte.pe "
+            "componente utaq mana kachkaq willakuykuna."
+        ),
+        "ay": (
+            "Yuspagara, **uñakawi modon** uñt'atasmatjja.\n\n"
+            "Nayax **CEDIT** satawa. Akan **MEF** / **Invierte.pe** ukan plan uñakawi yanapt'asmat — "
+            "suma lurañ, qullqi, kamachi jan walt'awinaka, proyecto yatiyawi.\n\n"
+            "**Programación** ukax **janw yanapt'kaspati**; janiw inversión uñakawi lurañanakapax utjkiti.\n\n"
+            "**¿Kunats jumax kunjam expediente uñakaw munasmat?** Uka: suma lurañ, qullqi, Invierte.pe "
+            "componente jan ukax jani utjki yatiyawinaka."
+        ),
+    },
+    "illicit": {
+        "es": (
+            "Gracias por su mensaje. Seguimos en **modo auditoría**, pero solo para expedientes **legítimos** "
+            "y conformes a la ley.\n\n"
+            "Soy **CEDIT**. Puedo apoyar **planes de inversión pública** serios ante el **MEF** e **Invierte.pe**; "
+            "**no puedo ayudarle** con propuestas ilegales ni orientar fraude o delitos.\n\n"
+            "**¿Desea retomar la revisión de un expediente legal?** Indíqueme, por ejemplo: viabilidad, "
+            "presupuesto, brechas normativas o datos pendientes de su plan."
+        ),
+        "qu": (
+            "Qanpa willakuyniykita agradeceykuy. **Qhaway modon** kachkayku, ichaqa **kamachisqa** "
+            "proyectokunallam.\n\n"
+            "Ñuqaqa **CEDIT** kani. **MEF**wan **Invierte.pe**wan allin **inversión plan** qhawayta atiyni; "
+            "mana allin, mana kamachisqa willakuykunamantaqa **manam yanapayta atiynichu**.\n\n"
+            "**¿Allin expedientenmanta qhawayta munankichu?** Ejemplopaq: allin ruway, presupuesto, "
+            "kamachikuy pantasqakuna utaq mana kachkaq datos."
+        ),
+        "ay": (
+            "Juman aruskipäwim juk'amp yuspagara. **Uñakawi modon** uñt'atasmatjja, ukhamaraki **kamachin** "
+            "proyectonakakiw.\n\n"
+            "Nayax **CEDIT** satawa. **MEF** ukat **Invierte.pe** ukan sum **inversión plan** uñakawi "
+            "yanapt'asmat; jan kamachin uñt'awinakax **janw yanapt'kaspati**.\n\n"
+            "**¿Sum expediente uñakaw munasmat?** Uka: suma lurañ, presupuesto, kamachi jan walt'awinaka "
+            "jan ukax jani utjki yatiyawinaka."
+        ),
+    },
+}
+
+
+def kind_rejection_message(
+    kind: str,
+    locale: str = "es",
+    in_audit_session: bool = False,
+) -> str:
+    key = _normalize_locale(locale)
+    source = REJECTION_IN_AUDIT_SESSION if in_audit_session else REJECTION_OUT_OF_SCOPE
+    bucket = source.get(kind) or source["technical"]
+    return bucket.get(key, bucket["es"])
+
+
+def _chat_rejection_payload(
+    scope: str,
+    kind: str,
+    locale: str = "es",
+    *,
+    audit_session: bool = False,
+    session_mode: Optional[str] = None,
+    skip_usage: bool = False,
+) -> Dict[str, Any]:
+    if audit_session and not skip_usage:
+        check_freemium(scope, "audit")
+    usage = get_usage(scope)
+    if audit_session and not skip_usage:
+        usage = increment_usage(scope, "audit")
+    sm = (session_mode or "audit").lower().strip()
+    mode = "plan" if audit_session and sm == "plan" else "audit" if audit_session else "chat"
+    return {
+        "response": kind_rejection_message(kind, locale, in_audit_session=audit_session),
+        "mode": mode,
+        "input_mode": mode,
+        "consumes_audit_credit": audit_session,
+        "usage": usage,
+        "show_pdf": False,
+    }
+
+
+PDF_OUTPUT_LOCALE_NOTE = {
+    "es": "Redacta el documento en español formal peruano (MEF).",
+    "qu": "Redacta el documento en quechua; incluye glosario breve en español para términos MEF.",
+    "ay": "Redacta el documento en aymara; incluye glosario breve en español para términos MEF.",
+}
+
+MEF_APPROVAL_THRESHOLD = 80
+
 AUDIT_STRUCTURE_INSTRUCTION = """
-IMPORTANTE — Estructura OBLIGATORIA para auditorías de planes/expedientes (responde en este orden exacto con estos encabezados markdown):
+IMPORTANTE — Respuesta de CHAT para auditorías (NO es el PDF oficial). Orden exacto:
 
-ATENCIÓN SEGURIDAD PÚBLICA Y ÉTICA: Si el proyecto, plan o expediente contiene elementos ilegales, ilícitos, delictivos, fraudulentos o contrarios a la ética (ej. robos, desfalcos, sobornos, coimas, etc.), NO debes utilizar esta estructura ni inventar puntos fuertes. En su lugar, debes emitir un rechazo categórico inmediato y explicar que el Estado Peruano no financia ni avala actividades ilícitas bajo ninguna circunstancia.
+ATENCIÓN SEGURIDAD PÚBLICA Y ÉTICA: Si el proyecto contiene elementos ilegales o fraudulentos, rechaza de inmediato sin usar esta estructura.
 
-Si el plan es legal y legítimo, utiliza la siguiente estructura:
+Si el plan es legal y legítimo:
 
-## Mi opinión como su consejero
-(Empatía, tono cercano, guía clara sobre lo que leíste del documento del usuario. 2-3 párrafos cortos.)
+## Mi opinión como CEDIT
+(Preséntate brevemente como **CEDIT** si aún no lo hiciste. Empatía, 2-3 párrafos cortos. Resume qué proyecto detectaste: nombre, entidad, monto aproximado, plazo, ubicación.)
 
 ## Puntos fuertes
-(Viñetas con lo que está bien formulado en el plan presentado.)
+(Viñetas con lo bien formulado. Cita datos concretos del documento del usuario.)
 
 ## Dictamen técnico de auditoría
-(Dictamen formal: viabilidad, brechas legales frente a normativa MEF/Invierte.pe, recomendaciones concretas. Usa viñetas y **negritas** en conceptos clave.)
+(Dictamen formal MEF/Invierte.pe: viabilidad, brechas normativas, recomendaciones. Viñetas y **negritas**.)
+
+RECOLECCIÓN DE DATOS: Antes del dictamen, identifica y menciona explícitamente todo dato del expediente: denominación del proyecto, código SNIP/CUI si aparece, entidad ejecutora, ubigeo, costo total, fuente de financiamiento, plazo de ejecución, componente Invierte.pe, objetivos y productos. Si falta información crítica, indícalo en el dictamen como brecha.
+
+Si faltan datos para un PDF sólido (~10 páginas), añade al final un bloque:
+## Para alimentar su plan técnico (PDF)
+Con 2-4 preguntas MUY específicas según lo que falte (presupuesto, plazo, ubigeo, beneficiarios, fuente de financiamiento, etc.). Ejemplo: "¿Cuál es el presupuesto total en soles y el desglose por componente?"
 """
+
+AUDIT_PDF_GATHERING_INSTRUCTION = """
+Al auditar un documento adjunto (PDF), extrae y utiliza TODA la información disponible:
+denominación, entidad, ubigeo, montos, cronograma, objetivos, productos, indicadores, riesgos,
+normativa citada, firmas y fechas. Si el texto está incompleto, señala qué datos faltan para un expediente MEF sólido.
+"""
+
+# Secciones del PDF oficial (~9-10 páginas): una llamada LLM por bloque
+PDF_SECTION_SPECS: List[Tuple[str, str, str]] = [
+    ("1", "IDENTIFICACIÓN Y RESUMEN EJECUTIVO",
+     "Ficha del proyecto, entidad ejecutora, ubicación, costo total, plazo, financiamiento, objetivo general y resumen de 1 página."),
+    ("2", "MARCO NORMATIVO Y ALCANCE",
+     "Directivas MEF, Invierte.pe, SNIP, Ley de Presupuesto; alcance territorial e institucional del proyecto."),
+    ("3", "DIAGNÓSTICO Y PROBLEMÁTICA",
+     "Situación actual, demanda, brechas, población beneficiaria, indicadores de línea base."),
+    ("4", "ALTERNATIVAS Y SOLUCIÓN TÉCNICA",
+     "Alternativas evaluadas, solución propuesta, ingeniería/alcance físico, metodología de ejecución."),
+    ("5", "FORMULACIÓN FINANCIERA Y PRESUPUESTO",
+     "Costo de inversión, desglose por componentes/capitulos, fuentes de financiamiento, O&M, contingencias."),
+    ("6", "CRONOGRAMA DE EJECUCIÓN",
+     "Hitos, plazos por fase, entregables, supervisión y liquidación."),
+    ("7", "ANÁLISIS DE RIESGOS",
+     "Matriz: riesgo | probabilidad | impacto | mitigación. Mínimo 8 riesgos."),
+    ("8", "IMPACTO SOCIOAMBIENTAL Y SOSTENIBILIDAD",
+     "Externalidades, salvaguardas, sostenibilidad técnica y fiscal del proyecto."),
+    ("9", "CAPACIDAD INSTITUCIONAL Y GESTIÓN",
+     "Unidad formuladora, ejecutora, contrataciones OSCE, cadena de responsabilidad."),
+    ("10", "CONCLUSIONES, VIABILIDAD Y RECOMENDACIONES MEF",
+     "Dictamen de viabilidad, brechas pendientes, pasos para Invierte.pe y firma conceptual del documento."),
+]
+
+PDF_MIN_WORDS_PER_SECTION = 380
+PDF_AUDIT_TEXT_LIMIT = 18000
+PDF_CHAT_EXTRACT_LIMIT = 12000
 
 
 def _format_history(history: List[Dict], limit: int = 6) -> List:
@@ -218,6 +820,85 @@ def _format_history(history: List[Dict], limit: int = 6) -> List:
         elif role in ("assistant", "bot", "ai"):
             formatted.append(AIMessage(content=content))
     return formatted
+
+
+def _build_conversation_digest(
+    history: Optional[List[Dict]],
+    base_content: str,
+    audit_opinion: str = "",
+    audit_dictamen: str = "",
+    source_document: str = "",
+) -> str:
+    parts = []
+    if source_document:
+        parts.append(f"--- DOCUMENTO FUENTE (expediente del usuario) ---\n{source_document[:PDF_AUDIT_TEXT_LIMIT]}")
+    if audit_opinion:
+        parts.append(f"--- OPINIÓN DE AUDITORÍA (chat) ---\n{audit_opinion[:3000]}")
+    if audit_dictamen:
+        parts.append(f"--- DICTAMEN DE AUDITORÍA (chat) ---\n{audit_dictamen[:5000]}")
+    if history:
+        parts.append("--- HISTORIAL DE CONVERSACIÓN ---")
+        for h in history[-12:]:
+            role_name = "Usuario" if h.get("role") == "user" else "Asesor CEDIT"
+            parts.append(f"{role_name}: {(h.get('content') or '')[:2000]}")
+    parts.append(f"--- PROPUESTA / ANÁLISIS BASE ---\n{base_content[:8000]}")
+    return "\n\n".join(parts)
+
+
+def _gather_normative_context(queries: List[str], k: int = 2) -> str:
+    seen = set()
+    chunks: List[str] = []
+    for q in queries:
+        if not q or len(q) < 20:
+            continue
+        for doc in vectorstore.similarity_search(q[:1500], k=k):
+            snippet = doc.page_content.strip()
+            key = snippet[:120]
+            if key not in seen:
+                seen.add(key)
+                chunks.append(snippet)
+    return "\n\n---\n\n".join(chunks[:12])
+
+
+def _generate_pdf_sections_chunked(digest: str, project_name: str, normative_ctx: str) -> str:
+    """Genera el plan oficial sección por sección para alcanzar ~9-10 páginas."""
+    prior = ""
+    sections_out: List[str] = []
+    system_msg = (
+        "Eres redactor técnico oficial del MEF para expedientes Invierte.pe. "
+        "Redactas SOLO la sección solicitada, en español formal, sin saludos ni texto de chat. "
+        "Usa ## para el título de sección y ### para subsecciones. Incluye viñetas, tablas en texto "
+        "(filas con | cuando aplique) y cifras concretas tomadas del contexto del usuario. "
+        f"Cada sección debe tener al menos {PDF_MIN_WORDS_PER_SECTION} palabras de contenido sustantivo."
+    )
+
+    for num, title, focus in PDF_SECTION_SPECS:
+        chunk_prompt = (
+            f"Genera ÚNICAMENTE la sección ## {num}. {title}\n\n"
+            f"Enfoque obligatorio: {focus}\n\n"
+            f"Proyecto: {project_name}\n\n"
+            f"Contexto normativo (Pinecone):\n{normative_ctx[:4000]}\n\n"
+            f"Material del usuario y auditoría:\n{digest[:14000]}\n\n"
+        )
+        if prior:
+            chunk_prompt += (
+                f"Secciones ya redactadas (no repetir, solo enlazar si es necesario):\n{prior[-3500:]}\n\n"
+            )
+        chunk_prompt += (
+            "No escribas otras secciones. No uses 'Mi opinión' ni tono conversacional. "
+            "Inventario de datos: si el contexto trae montos, plazos o ubigeo, deben aparecer aquí."
+        )
+        messages = [
+            HumanMessage(content=system_msg),
+            HumanMessage(content=chunk_prompt),
+        ]
+        section_text = llm.invoke(messages).content.strip()
+        if not section_text.lower().startswith("##"):
+            section_text = f"## {num}. {title}\n\n{section_text}"
+        sections_out.append(section_text)
+        prior += section_text + "\n\n"
+
+    return "\n\n".join(sections_out)
 
 
 def is_technical_code_or_error(text: str) -> bool:
@@ -296,58 +977,50 @@ def run_chat(
     canal: str = "web",
     usage_scope: Optional[str] = None,
     skip_usage: bool = False,
+    locale: str = "es",
+    session_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     history = history or []
     scope = usage_scope or user_id
-    
+    audit_session = is_audit_session_active(session_mode, history)
+
     if is_technical_code_or_error(message):
-        rejection_text = (
-            "**Buen día.**\n\n"
-            "Como **Consejero Estatal Digital (CEDIT)** "
-            "estoy especializado exclusivamente en **gestión pública peruana**, **derechos ciudadanos**, "
-            "normativas de **Invierte.pe** y directivas del **MEF**.\n\n"
-            "Lamentablemente, no esta dentro de mis topicos hablar de temas como depuración de codigo , "
-            "ni atender consultas informáticas ajenas a los trámites del Estado.\n\n"
-            "Le sugiero de manera muy respetuosa consultar con un especialista en desarrollo de software o recurrir a foros de tecnología (como Stack Overflow).\n\n"
-            "¿Tiene alguna consulta sobre procedimientos del Estado, licitaciones de OSCE o expedientes de inversión pública en la que pueda asistirle?"
+        return _chat_rejection_payload(
+            scope,
+            "technical",
+            locale,
+            audit_session=audit_session,
+            session_mode=session_mode,
+            skip_usage=skip_usage,
         )
-        return {
-            "response": rejection_text,
-            "mode": "chat",
-            "input_mode": "chat",
-            "usage": get_usage(scope),
-            "show_pdf": False,
-        }
 
     if is_illicit_or_harmful(message):
-        rejection_text = (
-            "Como **Consejero Estatal Digital (CEDIT)**, estoy programado bajo los más estrictos principios de "
-            "**legalidad, ética pública y defensa de los recursos del Estado Peruano**.\n\n"
-            "Lamentablemente, el tema o propuesta que menciona involucra actividades ilegales o contrarias a la ley "
-            "(como el robo, desfalco o fraude). El Estado Peruano y sus instituciones (MEF, Invierte.pe) "
-            "no financian, avalan ni admiten bajo ninguna circunstancia planes orientados a cometer delitos o faltas éticas.\n\n"
-            "Le insto a reorientar cualquier propuesta hacia actividades legítimas y legales que beneficien a la sociedad "
-            "y cumplan con la normativa vigente. ¿Tiene alguna consulta sobre proyectos reales, legítimos y normativos "
-            "de inversión pública en los que pueda asistirle?"
+        return _chat_rejection_payload(
+            scope,
+            "illicit",
+            locale,
+            audit_session=audit_session,
+            session_mode=session_mode,
+            skip_usage=skip_usage,
         )
-        return {
-            "response": rejection_text,
-            "mode": "chat",
-            "input_mode": "chat",
-            "usage": get_usage(scope),
-            "show_pdf": False,
-        }
-
-    mode = detect_input_mode(message)
-    if not skip_usage and mode in ("audit", "plan"):
-        check_freemium(scope, mode)
+    if audit_session:
+        sm = (session_mode or "audit").lower().strip()
+        mode = "plan" if sm == "plan" else "audit"
+        billable = True
+    else:
+        mode = detect_input_mode(message)
+        billable = consumes_freemium_credit(message, mode=mode)
+    if not skip_usage and billable:
+        check_freemium(scope, "audit")
 
     docs = vectorstore.similarity_search(message, k=3)
     contexto = "\n\n".join([d.page_content for d in docs])
 
-    extra = ""
-    if mode in ("audit", "plan"):
-        extra = "\n\n" + AUDIT_STRUCTURE_INSTRUCTION
+    extra = "\n\n" + cedit_identity_instruction(history, message, locale)
+    if mode == "audit":
+        extra += "\n" + AUDIT_PDF_GATHERING_INSTRUCTION + "\n" + AUDIT_STRUCTURE_INSTRUCTION
+    elif mode == "plan":
+        extra += "\n" + AUDIT_STRUCTURE_INSTRUCTION
 
     messages = prompt.format_messages(
         context=contexto,
@@ -359,44 +1032,35 @@ def run_chat(
     response_mode = detect_response_mode(content, is_audit=(mode == "audit"))
 
     usage = get_usage(scope)
-    if not skip_usage and mode in ("audit", "plan"):
-        usage = increment_usage(scope, mode)
+    if not skip_usage and billable:
+        usage = increment_usage(scope, "audit")
 
     result = {
         "response": content,
         "mode": response_mode,
         "input_mode": mode,
+        "consumes_audit_credit": billable,
         "usage": usage,
         "show_pdf": should_offer_pdf(content, is_audit=(mode == "audit")),
     }
     if response_mode == "audit" or mode == "audit":
+        gaps = detect_project_data_gaps(content, history)
+        content = append_followup_questions(content, gaps)
         sections = parse_audit_sections(content)
+        result["response"] = content
         result["opinion"] = sections.get("opinion", "")
         result["strengths"] = sections.get("strengths", "")
         result["dictamen"] = sections.get("dictamen", content)
         result["display"] = sections.get("display", content)
+        result["data_gaps"] = gaps
+        result["needs_more_info"] = bool(gaps)
     return result
 
 
-def extract_pdf_text(content: bytes) -> str:
-    reader = PdfReader(io.BytesIO(content))
-    if reader.is_encrypted:
-        try:
-            reader.decrypt("")
-        except Exception:
-            raise ValueError("El PDF está protegido con contraseña. Suba una versión sin bloqueo.")
-
-    parts = []
-    for page in reader.pages:
-        extracted = page.extract_text()
-        if extracted:
-            parts.append(extracted)
-    text = "\n".join(parts).strip()
-    if not text:
-        raise ValueError(
-            "No se pudo extraer texto del PDF. Puede ser un escaneo sin OCR. "
-            "Use un PDF con texto seleccionable o exporte desde Word/Invierte.pe."
-        )
+def extract_pdf_text(content: bytes, max_chars: Optional[int] = None) -> str:
+    text, _, _ = get_pdf_document_stats(content)
+    if max_chars and len(text) > max_chars:
+        return text[:max_chars]
     return text
 
 
@@ -408,27 +1072,48 @@ def run_audit_pdf(
     canal: str = "web",
     usage_scope: Optional[str] = None,
     skip_usage: bool = False,
+    locale: str = "es",
+    history: Optional[List[Dict]] = None,
 ) -> Dict[str, Any]:
     scope = usage_scope or user_id
     if not skip_usage:
         check_freemium(scope, "audit")
 
-    text = extract_pdf_text(pdf_bytes)
+    text, page_count, char_count = get_pdf_document_stats(pdf_bytes)
+    if len(text) > PDF_AUDIT_TEXT_LIMIT:
+        text = text[:PDF_AUDIT_TEXT_LIMIT]
 
-    docs = vectorstore.similarity_search(text[:1000], k=4)
-    contexto = "\n\n".join([d.page_content for d in docs])
+    rag_queries = [
+        text[:1200],
+        text[1200:2400] if len(text) > 1200 else "",
+        user_text or "auditoría plan inversión pública MEF Invierte.pe",
+    ]
+    contexto = _gather_normative_context([q for q in rag_queries if q], k=3)
 
     user_note = f"\nComentario del usuario: {user_text}" if user_text.strip() else ""
     pregunta = (
         f"Realiza una auditoría completa del siguiente expediente/plan de proyecto.\n\n"
-        f"CONTENIDO DEL DOCUMENTO ({filename}):\n{text[:6000]}\n"
+        f"ARCHIVO: {filename}\n"
+        f"PÁGINAS EXTRAÍDAS: texto completo hasta {len(text)} caracteres.\n\n"
+        f"CONTENIDO DEL DOCUMENTO:\n{text[:PDF_CHAT_EXTRACT_LIMIT]}\n"
         f"{user_note}\n\n"
+        f"{cedit_identity_instruction(history, user_text or filename, locale)}\n"
+        f"{AUDIT_PDF_GATHERING_INSTRUCTION}\n"
         f"{AUDIT_STRUCTURE_INSTRUCTION}"
     )
 
-    messages = prompt.format_messages(context=contexto, chat_history=[], input=pregunta)
+    mef_score = score_document_against_mef(text, filename, normative_ctx=contexto)
+
+    messages = prompt.format_messages(
+        context=contexto,
+        chat_history=_format_history(history or [], limit=4),
+        input=pregunta,
+    )
     respuesta = llm.invoke(messages)
     content = respuesta.content
+    content += format_mef_score_markdown(mef_score)
+    gaps = detect_project_data_gaps(text, [])
+    content = append_followup_questions(content, gaps)
     sections = parse_audit_sections(content)
     usage = get_usage(scope)
     if not skip_usage:
@@ -442,8 +1127,16 @@ def run_audit_pdf(
         "dictamen": sections.get("dictamen", content),
         "filename": filename,
         "mode": "audit",
+        "input_mode": "audit",
+        "consumes_audit_credit": True,
         "usage": usage,
         "show_pdf": True,
+        "source_excerpt": text[:PDF_AUDIT_TEXT_LIMIT],
+        "page_count": page_count,
+        "char_count": char_count,
+        "data_gaps": gaps,
+        "needs_more_info": bool(gaps),
+        "mef_score": mef_score,
         "blockchain_payload": f"[REGISTRO BLOCKCHAIN] Auditoría: {filename} | user={user_id} | canal={canal}",
     }
 
@@ -464,7 +1157,8 @@ def run_refine_plan(
         f"El usuario pide: {user_request}\n\n"
         f"Reescribe el plan COMPLETO con los cambios solicitados. "
         f"Usa formato markdown con ## para secciones y viñetas. "
-        f"Cumple normativa MEF e Invierte.pe.\n{AUDIT_STRUCTURE_INSTRUCTION}"
+        f"Cumple normativa MEF e Invierte.pe.\n"
+        f"{cedit_identity_instruction(history, user_request)}\n{AUDIT_STRUCTURE_INSTRUCTION}"
     )
     docs = vectorstore.similarity_search(user_request, k=3)
     contexto = "\n\n".join([d.page_content for d in docs])
@@ -483,83 +1177,142 @@ def run_refine_plan(
         "response": content,
         "display": sections.get("display", content),
         "mode": detect_response_mode(content),
+        "input_mode": "plan",
+        "consumes_audit_credit": True,
         "usage": usage,
         "show_pdf": should_offer_pdf(content),
     }
 
 
-# --- PDF (mismo código que api.py) ---
+# --- PDF ---
 class CEDITPdf(FPDF):
     def __init__(self, title, project_name):
         super().__init__()
         self.doc_title = title
         self.project_name = project_name
+        self.set_margins(18, 22, 18)
 
     def header(self):
-        self.set_font("Helvetica", "B", 10)
+        if self.page_no() <= 2:
+            return
+        self.set_font("Helvetica", "B", 9)
         self.set_text_color(173, 0, 23)
-        self.cell(0, 6, "CONSEJERO ESTATAL DIGITAL (CEDIT)", align="L")
-        self.cell(0, 6, "Documento Generado por IA", align="R", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 5, "CEDIT - Plan Tecnico MEF / Invierte.pe", align="L")
+        self.set_font("Helvetica", "I", 8)
+        self.set_text_color(120, 120, 120)
+        self.cell(0, 5, self.project_name[:55] if self.project_name else "", align="R", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(173, 0, 23)
-        self.line(10, self.get_y(), 200, self.get_y())
-        self.ln(4)
+        y = self.get_y()
+        self.line(self.l_margin, y, self.w - self.r_margin, y)
+        self.ln(5)
 
     def footer(self):
-        self.set_y(-20)
+        if self.page_no() <= 1:
+            return
+        self.set_y(-18)
         self.set_font("Helvetica", "I", 8)
         self.set_text_color(128, 128, 128)
         fecha = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-        self.cell(0, 5, f"CEDIT | Generado: {fecha}", align="L")
+        self.cell(0, 5, f"CEDIT | {fecha}", align="L")
         self.cell(0, 5, f"Pagina {self.page_no()}/{{nb}}", align="R", new_x="LMARGIN", new_y="NEXT")
 
     def add_title_page(self):
         self.add_page()
-        self.ln(40)
-        self.set_font("Helvetica", "B", 28)
+        self.set_fill_color(248, 248, 248)
+        self.rect(0, 0, self.w, self.h, style="F")
+        self.ln(35)
+        self.set_font("Helvetica", "B", 11)
         self.set_text_color(173, 0, 23)
-        self.cell(0, 15, self.doc_title, align="C", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 8, "CONSEJERO ESTATAL DIGITAL", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.ln(12)
+        self.set_font("Helvetica", "B", 22)
+        self.set_text_color(40, 40, 40)
+        self.multi_cell(0, 11, self.doc_title, align="C")
         if self.project_name:
-            self.ln(8)
-            self.set_font("Helvetica", "", 16)
-            self.set_text_color(74, 74, 74)
-            self.cell(0, 10, self.project_name, align="C", new_x="LMARGIN", new_y="NEXT")
+            self.ln(10)
+            self.set_font("Helvetica", "", 14)
+            self.set_text_color(80, 80, 80)
+            self.multi_cell(0, 8, self.project_name, align="C")
+        self.ln(20)
+        self.set_font("Helvetica", "", 11)
+        self.set_text_color(100, 100, 100)
+        self.cell(0, 7, "Documento tecnico para formulacion y evaluacion", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 7, "Ministerio de Economia y Finanzas - Invierte.pe", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.ln(30)
+        self.set_draw_color(173, 0, 23)
+        self.set_line_width(0.8)
+        cx = self.w / 2
+        self.line(cx - 40, self.get_y(), cx + 40, self.get_y())
+
+    def add_table_of_contents(self):
+        self.add_page()
+        self.set_font("Helvetica", "B", 16)
+        self.set_text_color(173, 0, 23)
+        self.cell(0, 10, "INDICE", new_x="LMARGIN", new_y="NEXT")
+        self.ln(6)
+        self.set_font("Helvetica", "", 11)
+        self.set_text_color(50, 50, 50)
+        for num, title, _ in PDF_SECTION_SPECS:
+            self.cell(12, 7, f"{num}.")
+            self.cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
+        self.ln(4)
+        self.set_font("Helvetica", "I", 9)
+        self.set_text_color(120, 120, 120)
+        self.multi_cell(0, 5, "Documento generado por IA con base en la auditoria y datos del usuario. Validar en entidad competente.")
 
     def add_content(self, text):
         self.add_page()
-        self.set_auto_page_break(auto=True, margin=20)
+        self.set_auto_page_break(auto=True, margin=22)
         width = self.w - self.l_margin - self.r_margin
+        last_was_h2 = False
 
         for line in text.split("\n"):
             stripped = line.strip()
             if not stripped:
-                self.ln(3)
+                self.ln(2)
                 continue
 
             clean = stripped.replace("**", "").replace("__", "")
 
             if stripped.startswith("### "):
-                self.ln(3)
+                self.ln(2)
                 self.set_font("Helvetica", "B", 12)
-                self.set_text_color(100, 100, 100)
+                self.set_text_color(90, 90, 90)
                 self.multi_cell(width, 7, clean[4:])
             elif stripped.startswith("## "):
-                self.ln(4)
-                self.set_font("Helvetica", "B", 14)
-                self.set_text_color(74, 74, 74)
-                self.multi_cell(width, 8, clean[3:])
+                if last_was_h2 and self.get_y() > 40:
+                    self.add_page()
+                last_was_h2 = True
+                self.ln(3)
+                self.set_fill_color(245, 240, 240)
+                self.set_font("Helvetica", "B", 13)
+                self.set_text_color(173, 0, 23)
+                self.multi_cell(width, 9, clean[3:], fill=True)
+                self.set_draw_color(173, 0, 23)
+                self.line(self.l_margin, self.get_y() + 1, self.w - self.r_margin, self.get_y() + 1)
+                self.ln(3)
             elif stripped.startswith("# "):
-                self.ln(5)
-                self.set_font("Helvetica", "B", 16)
+                self.ln(4)
+                self.set_font("Helvetica", "B", 15)
                 self.set_text_color(173, 0, 23)
                 self.multi_cell(width, 9, clean[2:])
+            elif "|" in stripped and stripped.count("|") >= 2:
+                self.set_font("Helvetica", "", 9)
+                self.set_text_color(40, 40, 40)
+                cells = [c.strip() for c in stripped.split("|") if c.strip()]
+                row = "  |  ".join(cells[:6])
+                self.multi_cell(width, 5, row)
+                self.ln(1)
             elif stripped.startswith(("- ", "* ", "• ", "\u2022 ")):
-                self.set_font("Helvetica", "", 11)
+                self.set_font("Helvetica", "", 10)
                 self.set_text_color(30, 30, 30)
                 bullet = clean.lstrip("-*\u2022 ").strip()
-                self.multi_cell(width, 6, f"- {bullet}")
+                self.set_x(self.l_margin + 4)
+                self.multi_cell(width - 4, 6, f"  - {bullet}")
                 self.ln(1)
             else:
-                self.set_font("Helvetica", "", 11)
+                last_was_h2 = False
+                self.set_font("Helvetica", "", 10)
                 self.set_text_color(30, 30, 30)
                 self.multi_cell(width, 6, clean)
                 self.ln(1)
@@ -584,7 +1337,11 @@ def generate_plan_pdf(
     user_id: str = "anonymous",
     usage_scope: Optional[str] = None,
     skip_usage: bool = False,
-) -> Tuple[bytes, str, str]:
+    audit_opinion: str = "",
+    audit_dictamen: str = "",
+    source_document: str = "",
+    pdf_output_language: str = "es",
+) -> Tuple[bytes, str, str, Dict[str, Any]]:
     scope = usage_scope or user_id
     if not skip_usage:
         check_freemium(scope, "plan")
@@ -594,34 +1351,36 @@ def generate_plan_pdf(
             f"Plan previo:\n{content[:4000]}\n\nModificaciones: {modifications}\n\n"
             "Reescribe el documento completo con encabezados ## y viñetas."
         )
-        docs = vectorstore.similarity_search(modifications, k=2)
-        ctx = "\n\n".join([d.page_content for d in docs])
+        ctx = _gather_normative_context([modifications], k=2)
         messages = prompt.format_messages(context=ctx, chat_history=[], input=mod_prompt)
         content = llm.invoke(messages).content
 
-    historial_contexto = ""
-    if history:
-        historial_contexto = "\n--- HISTORIAL ---\n"
-        for h in history:
-            role_name = "Usuario" if h.get("role") == "user" else "Asesor CEDIT"
-            historial_contexto += f"{role_name}: {h.get('content', '')}\n"
-
-    generating_prompt = (
-        "Redacta un DOCUMENTO TÉCNICO OFICIAL MEF/Invierte.pe extenso y profesional.\n"
-        "Secciones: ## 1. RESUMEN EJECUTIVO, ## 2. VIABILIDAD, ## 3. PRESUPUESTO Y CRONOGRAMA, "
-        "## 4. MATRIZ DE RIESGOS, ## 5. CONCLUSIONES.\n"
-        "Sin saludos ni texto conversacional. Incorpora todo el historial.\n\n"
-        f"{historial_contexto}\nPropuesta base:\n{content}"
+    digest = _build_conversation_digest(
+        history,
+        content,
+        audit_opinion=audit_opinion,
+        audit_dictamen=audit_dictamen,
+        source_document=source_document,
     )
-    messages_clean = [
-        HumanMessage(content="Eres redactor técnico oficial del MEF. Solo el plan, sin chat."),
-        HumanMessage(content=generating_prompt),
-    ]
-    content = llm.invoke(messages_clean).content
+    normative_ctx = _gather_normative_context(
+        [content[:1500], audit_dictamen[:800], source_document[:800], "MEF Invierte.pe plan inversión"],
+        k=2,
+    )
+    lang = (pdf_output_language or "es").lower()[:2]
+    if lang not in PDF_OUTPUT_LOCALE_NOTE:
+        lang = "es"
+    _log(f"[CEDIT] Generando PDF por secciones (10 bloques), idioma={lang}...")
+    content = _generate_pdf_sections_chunked(
+        digest,
+        project_name=project_name or "Proyecto de Inversión Pública",
+        normative_ctx=normative_ctx + "\n" + PDF_OUTPUT_LOCALE_NOTE[lang],
+    )
+    plan_score = score_document_against_mef(content[:6000], title, normative_ctx=normative_ctx)
 
     pdf = CEDITPdf(sanitize_for_pdf(title), sanitize_for_pdf(project_name))
     pdf.alias_nb_pages()
     pdf.add_title_page()
+    pdf.add_table_of_contents()
     pdf.add_content(sanitize_for_pdf(content))
     pdf_output = pdf.output()
     if isinstance(pdf_output, str):
@@ -632,4 +1391,4 @@ def generate_plan_pdf(
     filename = f"CEDIT_Plan_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     if not skip_usage:
         increment_usage(scope, "plan")
-    return pdf_output, filename, f"0x{doc_hash[:40]}"
+    return pdf_output, filename, f"0x{doc_hash[:40]}", plan_score

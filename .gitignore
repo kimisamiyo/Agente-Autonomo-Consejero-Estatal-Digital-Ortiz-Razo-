@@ -22,6 +22,7 @@ __pycache__/
 .cedit_profile_synced
 .cedit_discord_sessions.json
 .cedit_pro_users.json
+.cedit_mef_news_state.json
 .cedit_web_premium.json
 
 # Build outputs

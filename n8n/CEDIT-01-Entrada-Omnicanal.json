@@ -3,13 +3,13 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## 🏛️ CEDIT — FLUJO 1 (IMPORTAR PRIMERO)\n\n**Entrada:** Webhook `POST /cedit/chat`\n\n**Camino:**\n1. Normalizar payload (mensaje, historial, canal, user_id)\n2. ¿Viene archivo PDF? → FastAPI `/api/upload`\n3. Si no → FastAPI `/api/chat`\n4. ¿Modo auditoría? → llamar **Flujo 2** (blockchain)\n5. Responder al cliente (web o Discord vía n8n)\n\n**Requiere:** FastAPI en puerto 8000 + importar Flujo 2",
-        "height": 320,
-        "width": 420,
+        "content": "## CEDIT FLUJO 1\n\n1. Activa este workflow (toggle verde).\n2. Activa antes el Flujo 02 (blockchain).\n3. FastAPI en :8000\n\nURL produccion: POST /webhook/cedit/chat\n\nPrueba manual en editor (solo escucha mientras editas): /webhook-test/cedit/chat",
+        "height": 280,
+        "width": 400,
         "color": 5
       },
       "id": "sticky-intro",
-      "name": "📌 LEER PRIMERO",
+      "name": "LEER PRIMERO",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [-120, 80]
@@ -22,7 +22,7 @@
         "options": {}
       },
       "id": "webhook-cedit-chat",
-      "name": "🌐 Webhook Chat",
+      "name": "Webhook Chat",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [380, 300],
@@ -35,86 +35,54 @@
             {
               "id": "a1",
               "name": "message",
-              "value": "={{ $json.body?.message || $json.message || '' }}",
+              "value": "={{ $json.body?.message ?? $json.message ?? '' }}",
               "type": "string"
             },
             {
               "id": "a2",
               "name": "history",
-              "value": "={{ $json.body?.history || $json.history || [] }}",
+              "value": "={{ $json.body?.history ?? $json.history ?? [] }}",
               "type": "array"
             },
             {
               "id": "a3",
               "name": "canal",
-              "value": "={{ $json.body?.canal || $json.canal || 'web' }}",
+              "value": "={{ $json.body?.canal ?? $json.canal ?? 'web' }}",
               "type": "string"
             },
             {
               "id": "a4",
               "name": "user_id",
-              "value": "={{ $json.body?.user_id || $json.user_id || 'web_anonymous' }}",
+              "value": "={{ $json.body?.user_id ?? $json.user_id ?? 'web_anonymous' }}",
               "type": "string"
             },
             {
               "id": "a5",
-              "name": "is_audit_register",
-              "value": "={{ ($json.body?.message || '').includes('[REGISTRO BLOCKCHAIN]') }}",
-              "type": "boolean"
+              "name": "locale",
+              "value": "={{ $json.body?.locale ?? $json.headers?.['x-locale'] ?? $json.headers?.['X-Locale'] ?? 'es' }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "session_mode",
+              "value": "={{ $json.body?.session_mode ?? 'chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "a7",
+              "name": "conversation_id",
+              "value": "={{ $json.body?.conversation_id ?? '' }}",
+              "type": "string"
             }
           ]
         },
         "options": {}
       },
       "id": "set-normalize",
-      "name": "⚙️ Normalizar payload",
+      "name": "Normalizar payload",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [620, 300]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "c1",
-              "leftValue": "={{ $json.is_audit_register }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "id": "if-blockchain-only",
-      "name": "🔗 ¿Solo registro blockchain?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [860, 300]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://127.0.0.1:5678/webhook-test/cedit/blockchain",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.message, user_id: $json.user_id, canal: $json.canal }) }}",
-        "options": {}
-      },
-      "id": "http-blockchain",
-      "name": "⛓️ → Flujo 2 Blockchain",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1100, 180]
     },
     {
       "parameters": {
@@ -128,21 +96,104 @@
               "value": "={{ $json.user_id }}"
             },
             {
+              "name": "X-Conversation-Id",
+              "value": "={{ $json.conversation_id }}"
+            },
+            {
               "name": "Content-Type",
               "value": "application/json"
+            },
+            {
+              "name": "X-Locale",
+              "value": "={{ $json.locale }}"
             }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: $json.message, history: $json.history, canal: $json.canal, user_id: $json.user_id }) }}",
-        "options": {}
+        "jsonBody": "={{ JSON.stringify({ message: $json.message, history: $json.history, canal: $json.canal, user_id: $json.user_id, locale: $json.locale, session_mode: $json.session_mode, conversation_id: $json.conversation_id }) }}",
+        "options": { "timeout": 120000 }
       },
       "id": "http-fastapi-chat",
-      "name": "🧠 FastAPI /api/chat",
+      "name": "FastAPI Chat",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 400]
+      "position": [900, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r1",
+              "name": "response",
+              "value": "={{ ($json.body ?? $json).display ?? ($json.body ?? $json).response ?? $json.error?.message ?? 'Error al conectar con FastAPI. Verifique uvicorn en puerto 8000.' }}",
+              "type": "string"
+            },
+            {
+              "id": "r2",
+              "name": "mode",
+              "value": "={{ ($json.body ?? $json).mode ?? 'chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "r3",
+              "name": "input_mode",
+              "value": "={{ ($json.body ?? $json).input_mode ?? 'chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "r4",
+              "name": "usage",
+              "value": "={{ ($json.body ?? $json).usage ?? {} }}",
+              "type": "object"
+            },
+            {
+              "id": "r5",
+              "name": "show_pdf",
+              "value": "={{ ($json.body ?? $json).show_pdf ?? false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "r6",
+              "name": "opinion",
+              "value": "={{ ($json.body ?? $json).opinion ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "r7",
+              "name": "strengths",
+              "value": "={{ ($json.body ?? $json).strengths ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "r8",
+              "name": "dictamen",
+              "value": "={{ ($json.body ?? $json).dictamen ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "r9",
+              "name": "display",
+              "value": "={{ ($json.body ?? $json).display ?? ($json.body ?? $json).response ?? '' }}",
+              "type": "string"
+            },
+            {
+              "id": "r10",
+              "name": "consumes_audit_credit",
+              "value": "={{ ($json.body ?? $json).consumes_audit_credit ?? false }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-api-response",
+      "name": "Aplanar respuesta API",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1140, 300]
     },
     {
       "parameters": {
@@ -163,84 +214,66 @@
               }
             }
           ],
-          "combinator": "or"
+          "combinator": "and"
         },
         "options": {}
       },
       "id": "if-audit-mode",
-      "name": "📋 ¿Modo auditoría?",
+      "name": "Modo auditoria",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1340, 400]
+      "position": [1380, 300]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:5678/webhook-test/cedit/blockchain",
+        "url": "http://127.0.0.1:5678/webhook/cedit/blockchain",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ message: '[REGISTRO BLOCKCHAIN] ' + ($json.filename || 'auditoria'), user_id: $('⚙️ Normalizar payload').item.json.user_id, canal: $('⚙️ Normalizar payload').item.json.canal, audit_hash: $json.blockchain_payload }) }}",
-        "options": { "continueOnFail": true }
+        "jsonBody": "={{ JSON.stringify({ message: '[REGISTRO BLOCKCHAIN] auditoria', user_id: $('Normalizar payload').first().json.user_id, canal: $('Normalizar payload').first().json.canal }) }}",
+        "options": { "timeout": 10000 }
       },
       "id": "http-blockchain-after-audit",
-      "name": "⛓️ Registrar auditoría",
+      "name": "Registrar blockchain",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1580, 320]
+      "position": [1620, 220],
+      "continueOnFail": true
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { response: $json.display || $json.response, mode: $json.mode, usage: $json.usage, show_pdf: $json.show_pdf, opinion: $json.opinion, strengths: $json.strengths } }}",
+        "responseBody": "={{ (() => { const j = $('Aplanar respuesta API').first().json; return { response: j.display || j.response, mode: j.mode, input_mode: j.input_mode, usage: j.usage, show_pdf: j.show_pdf, opinion: j.opinion, strengths: j.strengths, dictamen: j.dictamen, display: j.display, consumes_audit_credit: j.consumes_audit_credit }; })() }}",
         "options": {}
       },
       "id": "respond-webhook",
-      "name": "✅ Responder al cliente",
+      "name": "Responder al cliente",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1820, 400]
-    },
-    {
-      "parameters": {
-        "content": "## 🔀 RAMAS\n\n**Arriba (true):** mensaje solo blockchain → Flujo 2\n\n**Abajo (false):** chat normal → FastAPI\n\nSi `mode=audit` → registrar en blockchain antes de responder",
-        "height": 200,
-        "width": 280,
-        "color": 4
-      },
-      "id": "sticky-branches",
-      "name": "📌 Ramas",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [820, 520]
+      "position": [1860, 300]
     }
   ],
   "connections": {
-    "🌐 Webhook Chat": {
-      "main": [[{ "node": "⚙️ Normalizar payload", "type": "main", "index": 0 }]]
+    "Webhook Chat": {
+      "main": [[{ "node": "Normalizar payload", "type": "main", "index": 0 }]]
     },
-    "⚙️ Normalizar payload": {
-      "main": [[{ "node": "🔗 ¿Solo registro blockchain?", "type": "main", "index": 0 }]]
+    "Normalizar payload": {
+      "main": [[{ "node": "FastAPI Chat", "type": "main", "index": 0 }]]
     },
-    "🔗 ¿Solo registro blockchain?": {
+    "FastAPI Chat": {
+      "main": [[{ "node": "Aplanar respuesta API", "type": "main", "index": 0 }]]
+    },
+    "Aplanar respuesta API": {
+      "main": [[{ "node": "Modo auditoria", "type": "main", "index": 0 }]]
+    },
+    "Modo auditoria": {
       "main": [
-        [{ "node": "⛓️ → Flujo 2 Blockchain", "type": "main", "index": 0 }],
-        [{ "node": "🧠 FastAPI /api/chat", "type": "main", "index": 0 }]
+        [{ "node": "Registrar blockchain", "type": "main", "index": 0 }],
+        [{ "node": "Responder al cliente", "type": "main", "index": 0 }]
       ]
     },
-    "⛓️ → Flujo 2 Blockchain": {
-      "main": [[{ "node": "✅ Responder al cliente", "type": "main", "index": 0 }]]
-    },
-    "🧠 FastAPI /api/chat": {
-      "main": [[{ "node": "📋 ¿Modo auditoría?", "type": "main", "index": 0 }]]
-    },
-    "📋 ¿Modo auditoría?": {
-      "main": [
-        [{ "node": "⛓️ Registrar auditoría", "type": "main", "index": 0 }],
-        [{ "node": "✅ Responder al cliente", "type": "main", "index": 0 }]
-      ]
-    },
-    "⛓️ Registrar auditoría": {
-      "main": [[{ "node": "✅ Responder al cliente", "type": "main", "index": 0 }]]
+    "Registrar blockchain": {
+      "main": [[{ "node": "Responder al cliente", "type": "main", "index": 0 }]]
     }
   },
   "active": false,

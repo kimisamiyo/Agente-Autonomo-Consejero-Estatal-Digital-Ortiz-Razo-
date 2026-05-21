@@ -52,7 +52,7 @@
     },
     {
       "parameters": {
-        "content": "## Conexión con Flujo 01\n\nURL test: `http://localhost:5678/webhook-test/cedit/blockchain`\n\nEl frontend muestra `hash` en el badge de verificación.",
+        "content": "## Conexión con Flujo 01\n\n**Activar este flujo ANTES que el 01.**\n\nURL producción: `http://localhost:5678/webhook/cedit/blockchain`",
         "height": 160,
         "width": 300,
         "color": 3

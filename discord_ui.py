@@ -16,7 +16,7 @@ PERU_WHITE = 0xF8F9FA
 
 FLAG_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Flag_of_Peru.svg/320px-Flag_of_Peru.png"
 BRAND_NAME = "Consejero Estatal Digital"
-BRAND_HEADER = "🇵🇪 🏛️ Consejero Estatal Digital"
+BRAND_HEADER = "🇵🇪 🏛️ CEDIT"
 SLOGAN = "Al servicio del Perú 🇵🇪"
 
 
@@ -88,18 +88,85 @@ def peru_embed(
 
 
 def welcome_embed(requested_by: Optional[discord.abc.User] = None) -> discord.Embed:
-    """Mensaje de bienvenida — estilo del embed institucional peruano."""
+    """Mensaje de bienvenida — estilo embed institucional (como capturas de referencia)."""
     description = (
-        "**Buen día.**\n\n"
-        "¿Es usted **ciudadano(a)** y tiene dudas sobre trámites del Estado, "
-        "o es **servidor(a) público(a)** y necesita orientación sobre "
-        "**planes de inversión y proyectos** ante el **MEF**?\n\n"
-        "• Como **ciudadano(a)**, le oriento en **derechos y trámites** con lenguaje claro.\n"
-        "• Como **servidor(a) público(a)**, audito **planes en PDF** y verifico cumplimiento **Invierte.pe**.\n"
-        "• Escriba **`!`** y su consulta, o use los **botones** de abajo.\n"
-        "• **`/reiniciar_memoria`** borra esta conversación y recupera auditorías gratuitas."
+        "¡Hola! 👋 Soy **CEDIT**, tu **Consejero Estatal Digital** — asesor público virtual "
+        "al servicio del Perú.\n\n"
+        "Te ayudo si eres **ciudadano(a)** (derechos y trámites) o **servidor(a) público(a)** "
+        "(orientación de planes y expedientes para aprobación del **MEF**).\n\n"
+        "💬 **Conversa conmigo**\n"
+        "Escribe **`!`** seguido de tu consulta. Recuerdo el contexto de esta conversación "
+        "para darte respuestas cada vez más útiles.\n\n"
+        "👤 **Para Ciudadanos**\n"
+        "Pregunta sobre derechos, procedimientos del Estado o normativa peruana. "
+        "Te explico en palabras sencillas.\n\n"
+        "🏛️ **Para Servidores Públicos**\n"
+        "Envía tu plan o expediente en **`.pdf`** y verifico estructura y cumplimiento "
+        "con normativa **MEF / Invierte.pe**.\n\n"
+        "🧠 **Reiniciar conversación**\n"
+        "Usa **`/reiniciar_memoria`** o el botón **Reiniciar** para borrar el contexto "
+        "y recuperar tus **10 auditorías gratuitas** en este hilo."
     )
     return peru_embed(description, requested_by=requested_by, thumbnail=True)
+
+
+def document_received_embed(
+    filename: str,
+    page_count: int,
+    char_count: int,
+    requested_by: Optional[discord.abc.User] = None,
+) -> discord.Embed:
+    e = discord.Embed(
+        title="📄 Documento Recibido",
+        description=(
+            "¡He recibido tu archivo exitosamente!\n\n"
+            f"**Archivo:** `{filename}`\n"
+            f"**Páginas:** {page_count}\n"
+            f"**Caracteres extraídos:** {char_count:,}\n\n"
+            "Procederé a **revisar el expediente** según normativa **MEF / Invierte.pe** "
+            "y te daré recomendaciones de mejora."
+        ),
+        color=PERU_RED,
+    )
+    return apply_peru_branding(e, requested_by=requested_by, thumbnail=True)
+
+
+def document_review_embed(
+    body: str,
+    filename: str | None = None,
+    opinion: str | None = None,
+    strengths: str | None = None,
+    findings_title: str = "Hallazgos",
+    requested_by: Optional[discord.abc.User] = None,
+) -> discord.Embed:
+    """Revisión de documento — estilo 📋 Revisión del expediente."""
+    summary = body[:1800] if body else "—"
+    if len(body) > 1800:
+        summary += "\n\n… *(ver campos siguientes o mensaje completo)*"
+
+    e = discord.Embed(
+        title="📋 Revisión de Documento",
+        description=(
+            "**Análisis del Expediente**\n\n"
+            f"{summary}"
+        ),
+        color=PERU_RED,
+    )
+    apply_peru_branding(e, requested_by=requested_by, thumbnail=True)
+
+    if filename:
+        e.add_field(name="📄 Archivo", value=f"`{filename}`", inline=True)
+    if opinion:
+        e.add_field(name="💬 Opinión de CEDIT", value=opinion[:1020], inline=False)
+    if strengths:
+        e.add_field(name=f"✅ {findings_title}", value=strengths[:1020], inline=False)
+    elif body and "## dictamen" in body.lower():
+        e.add_field(
+            name=f"📌 {findings_title}",
+            value="Ver dictamen técnico en el hilo o use `/plan` para el PDF oficial.",
+            inline=False,
+        )
+    return e
 
 
 def greeting_embed(requested_by: Optional[discord.abc.User] = None) -> discord.Embed:
@@ -163,54 +230,49 @@ def response_embed(
     opinion: str | None = None,
     strengths: str | None = None,
     requested_by: Optional[discord.abc.User] = None,
-    queried_at: Optional[datetime.datetime] = None,
-    query_preview: str = "",
 ) -> discord.Embed:
-    colors = {"chat": PERU_RED, "audit": PERU_RED, "plan": PERU_GOLD}
+    if mode == "audit" and (opinion or strengths or filename):
+        e = document_review_embed(
+            body,
+            filename=filename,
+            opinion=opinion,
+            strengths=strengths or None,
+            requested_by=requested_by,
+        )
+        if usage:
+            lim = usage.get("limit", 10)
+            cnt = usage.get("count", 0)
+            if usage.get("is_pro"):
+                uso_txt = "💎 Pro — sin límite"
+            else:
+                uso_txt = f"**{cnt}/{lim}** auditorías en este hilo"
+            e.add_field(name="📊 Cupo", value=uso_txt, inline=True)
+        return e
 
-    attribution = query_attribution_block(requested_by, queried_at, query_preview)
+    colors = {"chat": PERU_RED, "audit": PERU_RED, "plan": PERU_GOLD}
     intros = {
-        "chat": "**Buen día.**\n\n",
-        "audit": "**Buen día.** He revisado su expediente. A continuación, mi análisis:\n\n",
-        "plan": "**Buen día.** Respecto a su **plan de inversión**:\n\n",
+        "chat": "A continuación, mi orientación según la normativa vigente del Estado peruano:\n\n",
+        "audit": "He revisado su expediente. Resumen:\n\n",
+        "plan": "Respecto a su **plan de inversión**:\n\n",
     }
     intro = intros.get(mode, intros["chat"])
-    prefix = f"{attribution}\n\n---\n\n" if attribution else ""
-    content = prefix + intro + (body[:3600] if body else "—")
+    content = intro + (body[:3600] if body else "—")
     if len(body) > 3600:
         content += "\n\n… *(respuesta recortada por límite de Discord)*"
 
-    e = discord.Embed(description=content, color=colors.get(mode, PERU_RED))
-    apply_peru_branding(e, requested_by=requested_by, thumbnail=True)
+    e = discord.Embed(
+        title="💬 Consulta normativa" if mode == "chat" else None,
+        description=content,
+        color=colors.get(mode, PERU_RED),
+    )
+    apply_peru_branding(e, requested_by=requested_by, thumbnail=mode == "chat")
 
-    if requested_by:
-        e.insert_field_at(
-            0,
-            name="📌 Respuesta dirigida a",
-            value=f"**{requested_by.display_name}** · {format_query_timestamp(queried_at)}",
-            inline=False,
-        )
-
-    if opinion:
-        e.add_field(
-            name="💬 Opinión del consejero",
-            value=opinion[:1020],
-            inline=False,
-        )
-    if strengths:
-        e.add_field(
-            name="✅ Puntos fuertes del plan",
-            value=strengths[:1020],
-            inline=False,
-        )
     if filename:
         e.add_field(name="📄 Expediente", value=f"`{filename}`", inline=True)
-    if usage:
-        if usage.get("is_pro"):
-            uso_txt = "💎 Pro — sin límite en esta cuenta"
-        else:
-            lim = usage.get("limit", 10)
-            uso_txt = f"**{usage.get('count', 0)}/{lim}** auditorías (esta conversación)"
+    if usage and mode != "audit":
+        lim = usage.get("limit", 10)
+        cnt = usage.get("count", 0)
+        uso_txt = "💎 Pro" if usage.get("is_pro") else f"**{cnt}/{lim}** auditorías"
         e.add_field(name="📊 Cupo", value=uso_txt, inline=True)
 
     return e
@@ -218,17 +280,51 @@ def response_embed(
 
 def freemium_blocked_embed(requested_by: Optional[discord.abc.User] = None) -> discord.Embed:
     e = discord.Embed(
+        title="🔒 Límite de auditorías alcanzado",
         description=(
             "**Buen día.**\n\n"
-            "Ha alcanzado el límite de **auditorías gratuitas** en **esta conversación**.\n\n"
-            "• **`/reiniciar_memoria`** — inicie un nuevo análisis y recupere su cupo\n"
-            "• **`/conectar_wallet`** — **Plan Pro** con historial persistente\n"
-            "• Abra otro canal o mensaje directo para una conversación nueva"
+            "Ha usado las **10 auditorías gratuitas** de esta conversación.\n\n"
+            "• **Mejore su plan** con los datos que ya tiene y use **`/corregir`**\n"
+            "• **Reinicie la memoria** con el botón o **`/reiniciar_memoria`** "
+            "(perderá el progreso de este hilo, pero podrá seguir usando el agente)\n"
+            "• **`/conectar_wallet`** — **Plan Pro** sin límite"
         ),
         color=PERU_DARK_RED,
     )
     apply_peru_branding(e, requested_by=requested_by, thumbnail=True)
     return e
+
+
+class ResetMemoryConfirmView(discord.ui.View):
+    """Confirmación antes de borrar memoria y cupo freemium."""
+
+    def __init__(self, conv_key: tuple):
+        super().__init__(timeout=120)
+        self.conv_key = conv_key  # (channel_id, user_id, is_dm)
+
+    @discord.ui.button(label="Sí, reiniciar memoria", style=discord.ButtonStyle.danger, emoji="🧠")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from discord_session import get_session
+
+        ch_id, user_id, is_dm = self.conv_key
+        sess = get_session(ch_id, user_id, is_dm)
+        sess.reset()
+        embed = welcome_embed(interaction.user)
+        embed.description = (
+            "🧠 **Memoria reiniciada.** Su progreso en este hilo se borró; "
+            "recuperó sus **auditorías gratuitas**.\n\n" + (embed.description or "")
+        )
+        await interaction.response.edit_message(embed=embed, view=MainMenuView())
+
+    @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=peru_embed(
+                "Operación cancelada. Su conversación y cupo **no** se modificaron.",
+                requested_by=interaction.user,
+            ),
+            view=None,
+        )
 
 
 def pro_welcome_embed(
@@ -331,20 +427,25 @@ class MainMenuView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Reiniciar",
+        label="Reiniciar memoria",
         style=discord.ButtonStyle.secondary,
         emoji="🧠",
         custom_id="cedit:btn_reset",
         row=1,
     )
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
+        is_dm = isinstance(interaction.channel, discord.DMChannel)
+        key = (interaction.channel_id, interaction.user.id, is_dm)
         await interaction.response.send_message(
             embed=peru_embed(
-                "**Buen día.**\n\n"
-                "Ejecute **`/reiniciar_memoria`** para borrar el contexto de esta conversación "
-                "y recuperar sus **auditorías gratuitas**.",
+                "**¿Reiniciar memoria?**\n\n"
+                "Su progreso en **esta conversación** se perderá (historial y barra de auditoría), "
+                "pero podrá seguir usando el agente con cupo renovado.\n\n"
+                "Confirme abajo o use **`/reiniciar_memoria`**.",
                 requested_by=interaction.user,
+                title="🧠 Reiniciar memoria",
             ),
+            view=ResetMemoryConfirmView(key),
             ephemeral=True,
         )
 

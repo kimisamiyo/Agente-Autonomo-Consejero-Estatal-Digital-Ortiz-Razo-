@@ -1,0 +1,207 @@
+{
+  "name": "CEDIT 03 — Radar noticias MEF (8:00 diario)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📰 CEDIT — FLUJO 3\n\n**Programación:** todos los días a las **08:00** (hora del servidor n8n).\n\n**Qué hace:**\n1. Llama a FastAPI `POST /api/automation/mef-news/sync`\n2. Revisa enlaces nuevos en [Gob.pe MEF Noticias](https://www.gob.pe/institucion/mef/noticias)\n3. Si hay novedades → opcional aviso Discord\n\n**Requiere:** `uvicorn` en puerto **8000**.\n\n**Zona horaria:** define `TZ=America/Lima` al iniciar n8n si quieres 8:00 Perú.",
+        "height": 340,
+        "width": 420,
+        "color": 2
+      },
+      "id": "sticky-mef-news",
+      "name": "📌 LEER — Radar MEF",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-100, 80]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-8am",
+      "name": "⏰ 08:00 diario",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [380, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cedit/automation/mef-news",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-manual-sync",
+      "name": "🌐 Webhook manual",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [380, 480],
+      "webhookId": "cedit-mef-news-sync"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/api/automation/mef-news/sync",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ verify_urls: true, max_verify: 20, canal: 'n8n', triggered_at: $now.toISO() }) }}",
+        "options": { "timeout": 180000 }
+      },
+      "id": "http-sync-mef",
+      "name": "📡 FastAPI sync MEF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-new",
+              "leftValue": "={{ $json.new_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-new",
+      "name": "¿Noticias nuevas?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 380]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log1",
+              "name": "log",
+              "value": "={{ 'CEDIT MEF: ' + $json.new_count + ' noticia(s) nueva(s), ' + $json.new_relevant_count + ' relevante(s) para inversión pública.' }}",
+              "type": "string"
+            },
+            {
+              "id": "digest",
+              "name": "digest",
+              "value": "={{ $json.digest_markdown }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-digest",
+      "name": "📝 Preparar digest",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1140, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISCORD_MEF_NEWS_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: ($json.digest || '').slice(0, 1900) }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "http-discord-optional",
+      "name": "💬 Discord (opcional)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 280],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log0",
+              "name": "log",
+              "value": "={{ $json.ok ? 'CEDIT MEF: sin noticias nuevas (' + $json.listing_count + ' en listado).' : 'Error sync: ' + ($json.error || 'desconocido') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-no-new",
+      "name": "📋 Log sin novedad",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1140, 500]
+    },
+    {
+      "parameters": {
+        "content": "## Discord opcional\n\nVariable de entorno en n8n:\n`DISCORD_MEF_NEWS_WEBHOOK_URL`\n\nSi está vacía, el nodo falla en silencio (`continueOnFail`).\n\nPrueba manual:\n`POST http://localhost:5678/webhook/cedit/automation/mef-news`",
+        "height": 200,
+        "width": 320,
+        "color": 3
+      },
+      "id": "sticky-discord",
+      "name": "📌 Discord",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1320, 80]
+    }
+  ],
+  "connections": {
+    "⏰ 08:00 diario": {
+      "main": [[{ "node": "📡 FastAPI sync MEF", "type": "main", "index": 0 }]]
+    },
+    "🌐 Webhook manual": {
+      "main": [[{ "node": "📡 FastAPI sync MEF", "type": "main", "index": 0 }]]
+    },
+    "📡 FastAPI sync MEF": {
+      "main": [[{ "node": "¿Noticias nuevas?", "type": "main", "index": 0 }]]
+    },
+    "¿Noticias nuevas?": {
+      "main": [
+        [{ "node": "📝 Preparar digest", "type": "main", "index": 0 }],
+        [{ "node": "📋 Log sin novedad", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Preparar digest": {
+      "main": [[{ "node": "💬 Discord (opcional)", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Lima"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": [{ "name": "CEDIT" }, { "name": "MEF" }, { "name": "automation" }]
+}

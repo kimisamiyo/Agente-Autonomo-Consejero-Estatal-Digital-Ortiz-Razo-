@@ -1,8 +1,25 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
+import SettingsView from './components/SettingsView';
+import ExpedientesView from './components/ExpedientesView';
+import NormativasView from './components/NormativasView';
+import { loadSettings, applySettingsToDocument } from './utils/userSettings';
+import { I18nProvider } from './i18n/I18nContext';
+import FreemiumGateModal from './components/FreemiumGateModal';
 import PremiumModal, { STORAGE_WALLET, STORAGE_NAME, STORAGE_PRO } from './components/PremiumModal';
+import {
+  loadWebWorkspace,
+  saveWebWorkspace,
+  clearWebWorkspace,
+  saveFreshWorkspace,
+  createEmptyChat,
+  packActiveChat,
+  deriveChatTitle,
+  FREE_CHAT_SLOTS,
+} from './utils/chatWorkspace';
+import { postChatMessage, formatChatError } from './utils/chatApi';
 
 const FREE_LIMIT = 10;
 
@@ -15,23 +32,15 @@ function getUserId() {
   return id;
 }
 
-function getConversationId() {
-  let id = sessionStorage.getItem('cedit_conversation_id');
-  if (!id) {
-    id = `conv_${crypto.randomUUID?.() || Date.now()}`;
-    sessionStorage.setItem('cedit_conversation_id', id);
-  }
-  return id;
+function newConversationId() {
+  return `conv_${crypto.randomUUID?.() || Date.now()}`;
 }
 
-function resetConversationId() {
-  sessionStorage.removeItem('cedit_conversation_id');
-}
-
-const buildApiHeaders = (userId, conversationId, wallet = '') => ({
+const buildApiHeaders = (userId, usageScopeId, wallet = '', locale = 'es') => ({
   headers: {
     'X-User-Id': userId,
-    'X-Conversation-Id': conversationId,
+    'X-Conversation-Id': usageScopeId,
+    'X-Locale': locale,
     ...(wallet ? { 'X-Wallet-Address': wallet } : {}),
   },
 });
@@ -39,14 +48,13 @@ const buildApiHeaders = (userId, conversationId, wallet = '') => ({
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null, errorInfo: null };
+    this.state = { hasError: false, error: null };
   }
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
   componentDidCatch(error, errorInfo) {
     console.error('React Error Boundary:', error, errorInfo);
-    this.setState({ errorInfo });
   }
   render() {
     if (this.state.hasError) {
@@ -66,35 +74,96 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+function initWorkspace() {
+  const saved = loadWebWorkspace();
+  if (saved?.chats?.length && saved.activeChatId) {
+    const active = saved.chats.find((c) => c.id === saved.activeChatId) || saved.chats[0];
+    return { chats: saved.chats, active };
+  }
+  const id = newConversationId();
+  const chat = createEmptyChat(id);
+  return { chats: [chat], active: chat };
+}
+
 function App() {
+  const initial = useRef(initWorkspace());
+  const skipWorkspaceSyncRef = useRef(false);
+  const [chats, setChats] = useState(initial.current.chats);
+  const [conversationId, setConversationId] = useState(initial.current.active.id);
+  const [messages, setMessages] = useState(initial.current.active.messages || []);
+  const [sessionMode, setSessionMode] = useState(initial.current.active.sessionMode || 'chat');
+  const [blockchainHash, setBlockchainHash] = useState(initial.current.active.blockchainHash || null);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [chatHistoryList, setChatHistoryList] = useState([]);
   const [usage, setUsage] = useState({ count: 0, limit: FREE_LIMIT, remaining: FREE_LIMIT });
-  const [sessionMode, setSessionMode] = useState('chat');
-  const [blockchainHash, setBlockchainHash] = useState(null);
   const [premiumOpen, setPremiumOpen] = useState(false);
+  const [gateModal, setGateModal] = useState({ open: false, mode: 'limit' });
   const [walletAddress, setWalletAddress] = useState(() => localStorage.getItem(STORAGE_WALLET) || '');
   const [premiumName, setPremiumName] = useState(() => localStorage.getItem(STORAGE_NAME) || '');
   const [isPremium, setIsPremium] = useState(() => localStorage.getItem(STORAGE_PRO) === 'true');
+  const [activeView, setActiveView] = useState('chat');
+  const [userSettings, setUserSettings] = useState(() => loadSettings());
+
   const userId = getUserId();
-  const [conversationId, setConversationId] = useState(getConversationId);
+  const usageScopeId = isPremium ? conversationId : userId;
+  const apiHeaders = () => buildApiHeaders(userId, usageScopeId, walletAddress, userSettings.locale || 'es');
 
-  const apiHeaders = () => buildApiHeaders(userId, conversationId, walletAddress);
+  useEffect(() => {
+    applySettingsToDocument(userSettings);
+  }, [userSettings]);
 
-  const API_URL_N8N = '/n8n';
   const API_URL_DIRECT = '/api';
+
+  const freemiumBlocked = usage.freemium_exceeded && !isPremium;
+
+  const persistWorkspace = useCallback(
+    (nextChats, activeId) => {
+      if (!isPremium) {
+        saveWebWorkspace({ chats: nextChats, activeChatId: activeId });
+      }
+    },
+    [isPremium]
+  );
+
+  const syncChatsWithActive = useCallback(
+    (override = {}) => {
+      const packed = packActiveChat({
+        conversationId: override.conversationId ?? conversationId,
+        messages: override.messages ?? messages,
+        sessionMode: override.sessionMode ?? sessionMode,
+        blockchainHash: override.blockchainHash ?? blockchainHash,
+      });
+      setChats((prev) => {
+        const idx = prev.findIndex((c) => c.id === packed.id);
+        let next = [...prev];
+        if (idx >= 0) next[idx] = packed;
+        else next = [packed, ...next].slice(0, FREE_CHAT_SLOTS);
+        persistWorkspace(next, packed.id);
+        return next;
+      });
+    },
+    [conversationId, messages, sessionMode, blockchainHash, persistWorkspace]
+  );
+
+  useEffect(() => {
+    if (skipWorkspaceSyncRef.current) {
+      skipWorkspaceSyncRef.current = false;
+      return;
+    }
+    if (!isPremium) syncChatsWithActive();
+  }, [messages, sessionMode, conversationId, blockchainHash, isPremium, syncChatsWithActive]);
 
   const syncUsage = useCallback(async () => {
     try {
       const { data } = await axios.get(`${API_URL_DIRECT}/usage`, apiHeaders());
       setUsage(data);
       if (data.is_pro) setIsPremium(true);
+      if (data.freemium_exceeded && !data.is_pro) setSessionMode('freemium');
     } catch {
       /* ignore */
     }
-  }, [userId, conversationId, walletAddress]);
+  }, [userId, usageScopeId, walletAddress, isPremium]);
 
   useEffect(() => {
     const w = localStorage.getItem(STORAGE_WALLET);
@@ -115,11 +184,36 @@ function App() {
     syncUsage();
   }, [syncUsage]);
 
+  const openLimitGate = useCallback(() => {
+    setGateModal({ open: true, mode: 'limit' });
+  }, []);
+
+  const blockIfFreemium = useCallback(() => {
+    if (freemiumBlocked) {
+      openLimitGate();
+      return true;
+    }
+    return false;
+  }, [freemiumBlocked, openLimitGate]);
+
+  const loadChat = useCallback(
+    (chat) => {
+      setConversationId(chat.id);
+      setMessages(chat.messages || []);
+      setSessionMode(chat.sessionMode || 'chat');
+      setBlockchainHash(chat.blockchainHash || null);
+      persistWorkspace(chats, chat.id);
+    },
+    [chats, persistWorkspace]
+  );
+
   const applyBotPayload = (data, extra = {}) => {
     const mode = data.mode || 'chat';
-    if (mode === 'audit' || mode === 'plan') setSessionMode(mode);
+    const billable = data.consumes_audit_credit === true;
+    if (billable) setSessionMode(data.input_mode === 'plan' ? 'plan' : 'audit');
+    else if (mode === 'freemium') setSessionMode('freemium');
     if (data.usage) setUsage(data.usage);
-    const content = data.display || data.response;
+    const content = data.display || data.response || '';
     return {
       role: 'bot',
       content,
@@ -129,31 +223,101 @@ function App() {
       showPdf: data.show_pdf ?? false,
       opinion: data.opinion,
       strengths: data.strengths,
+      dictamen: data.dictamen,
+      sourceExcerpt: data.source_excerpt,
+      needsMoreInfo: data.needs_more_info,
+      pageCount: data.page_count,
+      charCount: data.char_count,
+      consumesAuditCredit: billable,
+      mefScore: data.mef_score,
       ...extra,
     };
   };
 
+  const performFullReset = useCallback(async () => {
+    try {
+      await axios.post(`${API_URL_DIRECT}/reset-freemium`, {}, apiHeaders());
+    } catch {
+      /* ignore */
+    }
+
+    clearWebWorkspace();
+
+    const id = newConversationId();
+    const chat = saveFreshWorkspace(createEmptyChat(id));
+
+    skipWorkspaceSyncRef.current = true;
+    setChats([chat]);
+    setConversationId(chat.id);
+    setMessages([]);
+    setSessionMode('chat');
+    setBlockchainHash(null);
+    setActiveView('chat');
+    setGateModal({ open: false, mode: 'limit' });
+    syncUsage();
+  }, [apiHeaders, syncUsage]);
+
   const handleFreemiumError = (error, newMessages) => {
-    const detail = error.response?.data?.detail || 'Límite freemium alcanzado.';
+    const detail = error.response?.data?.detail || 'Ha alcanzado el límite de 10 auditorías.';
     setMessages([
       ...newMessages,
       {
         role: 'bot',
-        content: `🔒 **Límite de esta conversación**\n\n${detail}\n\nPulsa **Nuevo Análisis** para reiniciar y recuperar auditorías gratis. Las **Herramientas Pro** no consumen cupo.`,
+        content: `🔒 **Límite (${usage.count ?? 10}/10 auditorías compartidas)**\n\n${detail}`,
         mode: 'freemium',
+        isFreemiumBlock: true,
       },
     ]);
     setSessionMode('freemium');
     syncUsage();
+    openLimitGate();
+  };
+
+  const requestNewChat = () => {
+    if (blockIfFreemium()) return;
+
+    const packed = packActiveChat({ conversationId, messages, sessionMode, blockchainHash });
+    let nextChats = chats.map((c) => (c.id === conversationId ? packed : c));
+    if (!nextChats.some((c) => c.id === conversationId) && messages.length > 0) {
+      nextChats = [packed, ...nextChats];
+    }
+    nextChats = nextChats.slice(0, FREE_CHAT_SLOTS);
+
+    if (!isPremium && nextChats.length >= FREE_CHAT_SLOTS) {
+      setChats(nextChats);
+      persistWorkspace(nextChats, conversationId);
+      setGateModal({ open: true, mode: 'maxChats' });
+      return;
+    }
+
+    const newId = newConversationId();
+    const newChat = createEmptyChat(newId);
+    const finalChats = [...nextChats, newChat].slice(0, FREE_CHAT_SLOTS);
+
+    setChats(finalChats);
+    loadChat(newChat);
+    persistWorkspace(finalChats, newId);
+  };
+
+  const handleSelectChat = (chatId) => {
+    if (chatId === conversationId) return;
+    if (blockIfFreemium()) return;
+
+    const packed = packActiveChat({ conversationId, messages, sessionMode, blockchainHash });
+    let nextChats = chats.map((c) => (c.id === conversationId ? packed : c));
+    if (!nextChats.find((c) => c.id === conversationId) && messages.length > 0) {
+      nextChats = [packed, ...nextChats].slice(0, FREE_CHAT_SLOTS);
+    }
+    const target = nextChats.find((c) => c.id === chatId);
+    if (!target) return;
+    setChats(nextChats);
+    loadChat(target);
+    persistWorkspace(nextChats, chatId);
   };
 
   const handleSendMessage = async (text, options = {}) => {
     if (!text.trim()) return;
-    if (usage.freemium_exceeded && !isPremium && !options.isPremiumTool) {
-      const userMessage = { role: 'user', content: text };
-      handleFreemiumError({ response: { data: { detail: '' } } }, [...messages, userMessage]);
-      return;
-    }
+    if (blockIfFreemium() && !options.isPremiumTool) return;
 
     const userMessage = { role: 'user', content: text };
     const newMessages = [...messages, userMessage];
@@ -162,28 +326,32 @@ function App() {
 
     const payload = {
       message: text,
-      history: messages.map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.fullContent || m.content })),
+      history: messages.map((m) => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.fullContent || m.content,
+      })),
       canal: 'web',
       user_id: userId,
       conversation_id: conversationId,
+      locale: userSettings.locale || 'es',
+      session_mode: sessionMode,
     };
 
     try {
-      const response = await axios.post(`${API_URL_N8N}/chat`, payload, { timeout: 12000, ...apiHeaders() });
-      setMessages([...newMessages, applyBotPayload(response.data)]);
-    } catch {
-      try {
-        const response = await axios.post(`${API_URL_DIRECT}/chat`, payload, apiHeaders());
-        setMessages([...newMessages, applyBotPayload(response.data)]);
-      } catch (error) {
-        if (error.response?.status === 402) {
-          handleFreemiumError(error, newMessages);
-        } else {
-          setMessages([
-            ...newMessages,
-            { role: 'bot', content: '❌ Error al procesar. Verifica que `uvicorn api:app --reload` esté activo.' },
-          ]);
-        }
+      const { data } = await postChatMessage(payload, apiHeaders());
+      setMessages([...newMessages, applyBotPayload(data)]);
+    } catch (error) {
+      if (error.response?.status === 402) handleFreemiumError(error, newMessages);
+      else {
+        const hint = formatChatError(error, { n8nAttempted: error.n8nAttempted !== false });
+        setMessages([
+          ...newMessages,
+          {
+            role: 'bot',
+            content: `❌ **No se pudo obtener respuesta**\n\n${hint}`,
+            mode: 'chat',
+          },
+        ]);
       }
     } finally {
       setIsLoading(false);
@@ -192,10 +360,7 @@ function App() {
   };
 
   const handleUploadFile = async (file, userText) => {
-    if (usage.freemium_exceeded && !isPremium) {
-      handleFreemiumError({ response: { data: { detail: '' } } }, messages);
-      return;
-    }
+    if (blockIfFreemium()) return;
 
     const userMsgs = [];
     if (userText?.trim()) userMsgs.push({ role: 'user', content: userText });
@@ -210,52 +375,33 @@ function App() {
     formData.append('file', file);
     formData.append('user_text', userText || '');
     formData.append('canal', 'web');
+    formData.append('locale', userSettings.locale || 'es');
 
     try {
       const response = await axios.post(`${API_URL_DIRECT}/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-          ...apiHeaders().headers,
-        },
+        headers: { 'Content-Type': 'multipart/form-data', ...apiHeaders().headers },
       });
 
-      try {
-        const reg = await axios.post(
-          `${API_URL_N8N}/chat`,
-          {
-            message: response.data.blockchain_payload || `[REGISTRO BLOCKCHAIN] Auditoría: ${file.name}`,
-            history: [],
-            canal: 'web',
-            user_id: userId,
-          },
-          { timeout: 5000 }
-        );
-        if (reg.data?.hash) setBlockchainHash(reg.data.hash);
-      } catch {
-        /* blockchain opcional */
-      }
+      const docAck = {
+        role: 'bot',
+        content:
+          `📄 **Documento recibido**\n\n¡He recibido tu archivo exitosamente!\n\n` +
+          `**Archivo:** \`${file.name}\`\n` +
+          (response.data.page_count != null
+            ? `**Páginas:** ${response.data.page_count}\n**Caracteres:** ${Number(response.data.char_count || 0).toLocaleString()}\n\n`
+            : '') +
+          'Revisando expediente según normativa **MEF / Invierte.pe**…',
+        mode: 'audit',
+        isDocAck: true,
+      };
 
-      setMessages([
-        ...newMessages,
-        applyBotPayload(response.data, { filename: file.name, isAudit: true }),
-      ]);
+      setMessages([...newMessages, docAck, applyBotPayload(response.data, { filename: file.name, isAudit: true })]);
     } catch (error) {
-      if (error.response?.status === 402) {
-        handleFreemiumError(error, newMessages);
-      } else {
+      if (error.response?.status === 402) handleFreemiumError(error, newMessages);
+      else {
         const detail = error.response?.data?.detail;
-        const msg = typeof detail === 'string'
-          ? detail
-          : Array.isArray(detail)
-            ? detail.map((d) => d.msg || d).join(', ')
-            : 'Error al procesar el PDF.';
-        setMessages([
-          ...newMessages,
-          {
-            role: 'bot',
-            content: `❌ **No se pudo cargar el PDF**\n\n${msg}\n\nVerifica que el archivo tenga texto (no solo imagen escaneada) y que la API esté activa.`,
-          },
-        ]);
+        const msg = typeof detail === 'string' ? detail : 'Error al procesar el PDF.';
+        setMessages([...newMessages, { role: 'bot', content: `❌ **No se pudo cargar el PDF**\n\n${msg}` }]);
       }
     } finally {
       setIsLoading(false);
@@ -264,6 +410,8 @@ function App() {
   };
 
   const handleRefinePlan = async (originalContent, userRequest) => {
+    if (blockIfFreemium()) return;
+
     const userMessage = { role: 'user', content: userRequest };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
@@ -298,46 +446,83 @@ function App() {
     setWalletAddress(wallet);
     setPremiumName(displayName);
     setIsPremium(isPro);
+    setGateModal({ open: false, mode: 'limit' });
     syncUsage();
   };
 
-  const handleNewChat = () => {
-    if (messages.length > 0) {
-      const title = messages.find((m) => m.role === 'user')?.content || 'Análisis';
-      setChatHistoryList([{ title: `${title.substring(0, 28)}...` }, ...chatHistoryList]);
-    }
-    setMessages([]);
-    setSessionMode('chat');
-    setBlockchainHash(null);
-    resetConversationId();
-    setConversationId(getConversationId());
-    syncUsage();
-  };
+  const recentChats = chats.map((c) => ({
+    id: c.id,
+    title: c.id === conversationId ? deriveChatTitle(messages) || c.title : c.title,
+  }));
+
+  const canCreateNewChat = isPremium || chats.length < FREE_CHAT_SLOTS;
 
   return (
+    <I18nProvider locale={userSettings.locale || 'es'}>
     <div className="bg-background text-on-surface h-screen flex overflow-hidden font-body-md">
       <ErrorBoundary>
-        <Sidebar isOpen={isSidebarOpen} toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} history={chatHistoryList} onNewChat={handleNewChat} sessionMode={sessionMode} />
+        <Sidebar
+          isOpen={isSidebarOpen}
+          toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+          recentChats={recentChats}
+          activeChatId={conversationId}
+          activeView={activeView}
+          onNavigateView={(view) => {
+            setActiveView(view);
+            if (window.innerWidth < 768) setIsSidebarOpen(false);
+          }}
+          onSelectChat={(chatId) => {
+            setActiveView('chat');
+            handleSelectChat(chatId);
+          }}
+          onNewChat={() => {
+            setActiveView('chat');
+            requestNewChat();
+          }}
+          onResetMemory={() => setGateModal({ open: true, mode: 'reset' })}
+          sessionMode={sessionMode}
+          usage={usage}
+          canCreateNewChat={canCreateNewChat}
+          isPremium={isPremium}
+        />
       </ErrorBoundary>
       <ErrorBoundary>
-        <ChatInterface
-          isSidebarOpen={isSidebarOpen}
-          toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-          messages={messages}
-          isLoading={isLoading}
-          onSendMessage={handleSendMessage}
-          onUploadFile={handleUploadFile}
-          onRefinePlan={handleRefinePlan}
-          usage={usage}
-          sessionMode={sessionMode}
-          blockchainHash={blockchainHash}
-          userId={userId}
-          freemiumExceeded={usage.freemium_exceeded && !isPremium}
-          isPremium={isPremium}
-          premiumName={premiumName}
-          onOpenPremium={() => setPremiumOpen(true)}
-          apiHeaders={apiHeaders()}
-        />
+        {activeView === 'settings' && (
+          <SettingsView settings={userSettings} onSettingsChange={setUserSettings} />
+        )}
+        {activeView === 'expedientes' && <ExpedientesView />}
+        {activeView === 'normativas' && (
+          <NormativasView
+            onConsultNormativa={(prompt) => {
+              setActiveView('chat');
+              if (prompt?.trim()) handleSendMessage(prompt);
+            }}
+          />
+        )}
+        {activeView === 'chat' && (
+          <ChatInterface
+            toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+            messages={messages}
+            isLoading={isLoading}
+            onSendMessage={handleSendMessage}
+            onUploadFile={handleUploadFile}
+            onRefinePlan={handleRefinePlan}
+            usage={usage}
+            sessionMode={sessionMode}
+            blockchainHash={blockchainHash}
+            userId={userId}
+            uiLocale={userSettings.locale || 'es'}
+            freemiumExceeded={freemiumBlocked}
+            isPremium={isPremium}
+            premiumName={premiumName}
+            onOpenPremium={() => {
+              setGateModal({ open: false, mode: 'limit' });
+              setPremiumOpen(true);
+            }}
+            onRequestResetMemory={() => setGateModal({ open: true, mode: 'reset' })}
+            apiHeaders={apiHeaders}
+          />
+        )}
       </ErrorBoundary>
       <PremiumModal
         isOpen={premiumOpen}
@@ -346,7 +531,23 @@ function App() {
         userId={userId}
         apiHeaders={apiHeaders()}
       />
+      <FreemiumGateModal
+        mode={gateModal.mode}
+        isOpen={gateModal.open}
+        onClose={() => setGateModal({ open: false, mode: gateModal.mode })}
+        onConfirmReset={() => {
+          if (gateModal.mode === 'reset') performFullReset();
+        }}
+        onRequestReset={() => setGateModal({ open: true, mode: 'reset' })}
+        onConnectWallet={() => {
+          setGateModal({ open: false, mode: 'limit' });
+          setPremiumOpen(true);
+        }}
+        auditCount={usage.count ?? 0}
+        limit={typeof usage.limit === 'number' ? usage.limit : FREE_LIMIT}
+      />
     </div>
+    </I18nProvider>
   );
 }
 

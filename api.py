@@ -11,10 +11,13 @@ from cedit_core import (
     run_refine_plan,
     generate_plan_pdf,
     get_usage,
+    reset_usage,
     FreemiumLimitError,
     detect_input_mode,
+    consumes_freemium_credit,
 )
 from premium_store import register_wallet, connect_wallet, lookup_wallet, is_pro_wallet
+from mef_news_automation import sync_mef_news, get_latest_snapshot, MEF_NEWS_LIST_URL
 
 app = FastAPI(title="API Consejero Estatal Digital")
 
@@ -38,6 +41,8 @@ class ChatRequest(BaseModel):
     canal: str = "web"
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    locale: Optional[str] = None
+    session_mode: Optional[str] = None
 
 
 class GeneratePDFRequest(BaseModel):
@@ -47,6 +52,11 @@ class GeneratePDFRequest(BaseModel):
     modifications: Optional[str] = None
     history: Optional[List[ChatMessage]] = []
     user_id: Optional[str] = None
+    audit_opinion: Optional[str] = None
+    audit_dictamen: Optional[str] = None
+    source_document: Optional[str] = None
+    is_audit: bool = False
+    pdf_output_language: str = "es"
 
 
 class RefinePlanRequest(BaseModel):
@@ -59,6 +69,14 @@ class RefinePlanRequest(BaseModel):
 class DetectModeRequest(BaseModel):
     message: str
     has_pdf: bool = False
+    session_mode: Optional[str] = None
+
+
+class MefNewsSyncRequest(BaseModel):
+    verify_urls: bool = True
+    max_verify: int = 20
+    canal: str = "api"
+    triggered_at: Optional[str] = None
 
 
 class PremiumRegisterRequest(BaseModel):
@@ -124,6 +142,19 @@ async def premium_lookup(wallet: str):
     return entry
 
 
+@app.post("/api/reset-freemium")
+async def reset_freemium_endpoint(
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_conversation_id: Optional[str] = Header(None, alias="X-Conversation-Id"),
+    x_wallet: Optional[str] = Header(None, alias="X-Wallet-Address"),
+):
+    """Reinicia cupo freemium del scope (userId compartido en web gratis)."""
+    if is_pro_wallet(x_wallet):
+        return {"ok": True, "usage": _pro_usage()}
+    scope = x_conversation_id or _uid(x_user_id, None)
+    return {"ok": True, "usage": reset_usage(scope)}
+
+
 @app.get("/api/usage")
 async def usage_endpoint(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
@@ -136,10 +167,47 @@ async def usage_endpoint(
     return get_usage(scope or x_conversation_id or _uid(x_user_id, None))
 
 
+@app.post("/api/automation/mef-news/sync")
+async def mef_news_sync_endpoint(
+    request: MefNewsSyncRequest = MefNewsSyncRequest(),
+    x_automation_key: Optional[str] = Header(None, alias="X-Automation-Key"),
+):
+    """
+    Radar diario de noticias MEF (Gob.pe). Usado por n8n CEDIT-03 a las 08:00.
+    Opcional: header X-Automation-Key si defines CEDIT_AUTOMATION_KEY en .env
+    """
+    import os
+
+    expected = os.environ.get("CEDIT_AUTOMATION_KEY", "").strip()
+    if expected and (x_automation_key or "") != expected:
+        raise HTTPException(status_code=401, detail="Clave de automatización inválida.")
+    try:
+        return sync_mef_news(
+            verify_urls=request.verify_urls,
+            max_verify=min(max(request.max_verify, 1), 40),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/automation/mef-news/latest")
+async def mef_news_latest_endpoint():
+    """Último estado del radar MEF (para panel o depuración)."""
+    return get_latest_snapshot()
+
+
+@app.get("/api/automation/mef-news/source")
+async def mef_news_source_endpoint():
+    return {"source_url": MEF_NEWS_LIST_URL}
+
+
 @app.post("/api/detect-mode")
 async def detect_mode_endpoint(req: DetectModeRequest):
     mode = detect_input_mode(req.message, has_pdf=req.has_pdf)
-    return {"mode": mode, "is_premium_mode": mode in ("audit", "plan")}
+    billable = consumes_freemium_credit(
+        req.message, has_pdf=req.has_pdf, mode=mode, session_mode=req.session_mode
+    )
+    return {"mode": mode, "is_premium_mode": billable, "consumes_audit_credit": billable}
 
 
 @app.post("/api/chat")
@@ -148,6 +216,7 @@ async def chat_endpoint(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_conversation_id: Optional[str] = Header(None, alias="X-Conversation-Id"),
     x_wallet: Optional[str] = Header(None, alias="X-Wallet-Address"),
+    x_locale: Optional[str] = Header("es", alias="X-Locale"),
 ):
     user_id = _uid(x_user_id, request.user_id)
     scope = _scope(x_user_id, request.conversation_id, x_conversation_id)
@@ -161,6 +230,8 @@ async def chat_endpoint(
             canal=request.canal,
             usage_scope=scope,
             skip_usage=pro,
+            locale=x_locale or request.locale or "es",
+            session_mode=request.session_mode,
         )
         if pro:
             result["usage"] = _pro_usage()
@@ -179,6 +250,8 @@ async def upload_pdf(
     x_conversation_id: Optional[str] = Header(None, alias="X-Conversation-Id"),
     x_wallet: Optional[str] = Header(None, alias="X-Wallet-Address"),
     canal: str = Form("web"),
+    x_locale: Optional[str] = Header("es", alias="X-Locale"),
+    locale: str = Form(""),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
@@ -195,6 +268,7 @@ async def upload_pdf(
             canal=canal,
             usage_scope=scope,
             skip_usage=pro,
+            locale=x_locale or (locale.strip() if locale else None) or "es",
         )
         if pro:
             result["usage"] = _pro_usage()
@@ -212,12 +286,13 @@ async def generate_pdf_endpoint(
     request: GeneratePDFRequest,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_wallet: Optional[str] = Header(None, alias="X-Wallet-Address"),
+    x_locale: Optional[str] = Header("es", alias="X-Locale"),
 ):
     user_id = _uid(x_user_id, request.user_id)
     pro = is_pro_wallet(x_wallet)
     history = [{"role": m.role, "content": m.content} for m in (request.history or [])]
     try:
-        pdf_bytes, filename, doc_hash = generate_plan_pdf(
+        pdf_bytes, filename, doc_hash, plan_score = generate_plan_pdf(
             request.content,
             title=request.title,
             project_name=request.project_name,
@@ -225,15 +300,22 @@ async def generate_pdf_endpoint(
             history=history,
             user_id=user_id,
             skip_usage=pro,
+            audit_opinion=request.audit_opinion or "",
+            audit_dictamen=request.audit_dictamen or "",
+            source_document=request.source_document or "",
+            pdf_output_language=request.pdf_output_language or "es",
         )
         buffer = io.BytesIO(pdf_bytes)
         buffer.seek(0)
+        score_hdr = str(plan_score.get("estimated_with_official_plan", 0))
         return StreamingResponse(
             buffer,
             media_type="application/pdf",
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
                 "X-Blockchain-Hash": doc_hash,
+                "X-MEF-Score": score_hdr,
+                "X-MEF-Meets-Threshold": "1" if plan_score.get("meets_expediente_threshold") else "0",
                 "X-Network": "zkSYS Syscoin Testnet",
             },
         )

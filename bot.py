@@ -26,6 +26,7 @@ from cedit_core import (
     generate_plan_pdf,
     FreemiumLimitError,
     detect_input_mode,
+    consumes_freemium_credit,
 )
 from discord_session import get_session, activate_pro_user, get_pro_settings
 from discord_ui import (
@@ -36,8 +37,10 @@ from discord_ui import (
     pro_welcome_embed,
     thinking_embed,
     peru_embed,
+    document_received_embed,
     MainMenuView,
     PlanActionView,
+    ResetMemoryConfirmView,
 )
 
 load_dotenv()
@@ -96,8 +99,6 @@ async def send_bot_response(
         opinion=result.get("opinion"),
         strengths=result.get("strengths"),
         requested_by=user,
-        queried_at=when,
-        query_preview=query_preview,
     )
 
     view = PlanActionView(show_pdf=result.get("show_pdf", False)) if result.get("show_pdf") else None
@@ -150,13 +151,19 @@ async def on_ready():
 
 @bot.tree.command(name="reiniciar_memoria", description="Borra el contexto de ESTA conversación y recupera auditorías gratis")
 async def slash_reiniciar(interaction: discord.Interaction):
-    sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
-    sess.reset()
-    embed = welcome_embed(interaction.user)
-    embed.description = (
-        "🧠 **Memoria reiniciada** en esta conversación.\n\n" + (embed.description or "")
+    is_dm = _is_dm(interaction.channel)
+    key = (interaction.channel_id, interaction.user.id, is_dm)
+    await interaction.response.send_message(
+        embed=peru_embed(
+            "**¿Reiniciar memoria?**\n\n"
+            "Su progreso en esta conversación se **perderá**, pero recuperará las "
+            "**10 auditorías gratuitas** y podrá seguir usando el agente.",
+            requested_by=interaction.user,
+            title="🧠 Reiniciar memoria",
+        ),
+        view=ResetMemoryConfirmView(key),
+        ephemeral=True,
     )
-    await interaction.response.send_message(embed=embed, view=MainMenuView())
 
 
 @bot.tree.command(name="conectar_wallet", description="Activar Plan Pro (blockchain + memoria persistente)")
@@ -209,9 +216,14 @@ async def slash_auditar(interaction: discord.Interaction, consulta: str):
         )
         sess.append("user", consulta)
         sess.append("assistant", result.get("display") or result["response"])
-        sess.increment_audit(result.get("input_mode", "audit"))
+        if result.get("consumes_audit_credit"):
+            sess.increment_audit("audit")
         if result.get("show_pdf"):
-            sess.set_plan(result["response"])
+            sess.set_plan(
+                result["response"],
+                opinion=result.get("opinion", ""),
+                dictamen=result.get("dictamen", ""),
+            )
         await send_bot_response(
             interaction, result, sess,
             requested_by=interaction.user,
@@ -220,7 +232,8 @@ async def slash_auditar(interaction: discord.Interaction, consulta: str):
         )
     except FreemiumLimitError:
         await interaction.followup.send(
-            embed=freemium_blocked_embed(interaction.user), view=MainMenuView()
+            embed=freemium_blocked_embed(interaction.user),
+            view=ResetMemoryConfirmView((interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))),
         )
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
@@ -238,11 +251,17 @@ async def slash_plan(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     try:
         sess.check_freemium("plan")
-        pdf_bytes, filename, doc_hash = generate_plan_pdf(
+        meta = sess.get_audit_meta()
+        pdf_bytes, filename, doc_hash, _plan_score = generate_plan_pdf(
             content,
             title=f"Plan MEF — {sess.get_filename() or 'CEDIT'}",
+            project_name=sess.get_filename().replace(".pdf", "") if sess.get_filename() else "Proyecto CEDIT",
+            history=sess.history,
             user_id=f"discord_{interaction.user.id}",
             skip_usage=True,
+            audit_opinion=meta.get("opinion", ""),
+            audit_dictamen=meta.get("dictamen", ""),
+            source_document=meta.get("source_excerpt", ""),
         )
         sess.increment_audit("plan")
         pdf_ok = peru_embed(
@@ -258,7 +277,10 @@ async def slash_plan(interaction: discord.Interaction):
             embed=audit_bar_embed(sess.usage(), "plan", requested_by=interaction.user)
         )
     except FreemiumLimitError:
-        await interaction.followup.send(embed=freemium_blocked_embed(interaction.user))
+        await interaction.followup.send(
+            embed=freemium_blocked_embed(interaction.user),
+            view=ResetMemoryConfirmView((interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))),
+        )
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
 
@@ -294,7 +316,8 @@ async def slash_corregir(interaction: discord.Interaction, solicitud: str):
         )
     except FreemiumLimitError:
         await interaction.followup.send(
-            embed=freemium_blocked_embed(interaction.user), view=MainMenuView()
+            embed=freemium_blocked_embed(interaction.user),
+            view=ResetMemoryConfirmView((interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))),
         )
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
@@ -321,6 +344,23 @@ async def process_user_message(message: discord.Message, text: str):
             data = await att.read()
             mode = "audit"
             sess.check_freemium(mode)
+            from cedit_core import get_pdf_document_stats
+
+            try:
+                _, pages, chars = get_pdf_document_stats(data)
+            except ValueError:
+                pages, chars = 0, 0
+            recv = document_received_embed(
+                att.filename, pages, chars, requested_by=message.author
+            )
+            try:
+                await thinking.delete()
+            except discord.HTTPException:
+                pass
+            await message.channel.send(embed=recv)
+            thinking = await message.channel.send(
+                embed=thinking_embed("Revisando expediente ante normativa MEF…")
+            )
             result = run_audit_pdf(
                 data,
                 att.filename,
@@ -332,8 +372,15 @@ async def process_user_message(message: discord.Message, text: str):
             sess.mode = "audit"
             sess.append("user", f"PDF: {att.filename}" + (f"\n{text}" if text else ""))
             sess.append("assistant", result.get("display") or result["response"])
-            sess.increment_audit(mode)
-            sess.set_plan(result["response"], att.filename)
+            if result.get("consumes_audit_credit"):
+                sess.increment_audit("audit")
+            sess.set_plan(
+                result["response"],
+                att.filename,
+                opinion=result.get("opinion", ""),
+                dictamen=result.get("dictamen", ""),
+                source_excerpt=result.get("source_excerpt", ""),
+            )
             preview = f"PDF: {att.filename}" + (f" — {text}" if text else "")
             await send_bot_response(
                 message.channel, result, sess,
@@ -348,7 +395,8 @@ async def process_user_message(message: discord.Message, text: str):
             except Exception:
                 pass
             await message.channel.send(
-                embed=freemium_blocked_embed(message.author), view=MainMenuView()
+                embed=freemium_blocked_embed(message.author),
+                view=ResetMemoryConfirmView((message.channel.id, message.author.id, is_dm)),
             )
         except Exception as e:
             try:
@@ -364,22 +412,33 @@ async def process_user_message(message: discord.Message, text: str):
     queried_at = datetime.now()
     thinking = await message.channel.send(embed=thinking_embed("Consultando normativa vigente…"))
     try:
+        active_mode = sess.mode if sess.mode in ("audit", "plan") else None
         mode = detect_input_mode(text)
-        if mode in ("audit", "plan"):
-            sess.check_freemium(mode)
+        billable = consumes_freemium_credit(
+            text, mode=mode, session_mode=active_mode, history=sess.history
+        )
+        if billable:
+            sess.check_freemium("audit")
         result = run_chat(
             text,
             history=sess.history,
             user_id=f"discord_{message.author.id}",
             canal="discord",
             skip_usage=True,
+            session_mode=active_mode,
         )
         sess.append("user", text)
         sess.append("assistant", result.get("display") or result["response"])
-        if result.get("input_mode") in ("audit", "plan") or result.get("mode") in ("audit", "plan"):
-            sess.increment_audit(result.get("mode", mode))
+        if result.get("consumes_audit_credit"):
+            bill_mode = result.get("input_mode") or "audit"
+            sess.increment_audit(bill_mode)
+            sess.mode = bill_mode
         if result.get("show_pdf"):
-            sess.set_plan(result["response"])
+            sess.set_plan(
+                result["response"],
+                opinion=result.get("opinion", ""),
+                dictamen=result.get("dictamen", ""),
+            )
         await send_bot_response(
             message.channel, result, sess,
             thinking_msg=thinking,
@@ -393,7 +452,8 @@ async def process_user_message(message: discord.Message, text: str):
         except Exception:
             pass
         await message.channel.send(
-            embed=freemium_blocked_embed(message.author), view=MainMenuView()
+            embed=freemium_blocked_embed(message.author),
+            view=ResetMemoryConfirmView((message.channel.id, message.author.id, is_dm)),
         )
     except Exception as e:
         try:

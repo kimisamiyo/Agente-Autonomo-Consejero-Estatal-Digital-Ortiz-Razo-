@@ -1,14 +1,44 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 import ToolsDropdown from './ToolsDropdown';
+import MefScoreCard from './MefScoreCard';
+import PdfLanguageModal from './PdfLanguageModal';
+import { saveExpediente } from '../utils/expedientesStore';
+import { useI18n } from '../i18n/I18nContext';
+import {
+  ceditCardClass,
+  ceditIconBoxClass,
+  ceditLabelClass,
+  ceditBtnPrimaryClass,
+  ceditBtnSecondaryClass,
+} from '../theme/ceditPalette';
+import { stripMefIndexMarkdown } from '../utils/stripMefMarkdown';
 
-const MODE_CONFIG = {
-  chat: { label: 'Consulta normativa', icon: 'forum', color: 'bg-slate-100 text-slate-700 border-slate-200' },
-  audit: { label: 'Modo auditoría MEF', icon: 'fact_check', color: 'bg-red-50 text-red-900 border-red-200' },
-  plan: { label: 'Plan de inversión', icon: 'architecture', color: 'bg-amber-50 text-amber-900 border-amber-200' },
-  freemium: { label: 'Límite freemium', icon: 'lock', color: 'bg-amber-50 text-amber-800 border-amber-300' },
-};
+function BotMessageHeader({ mode, subtitle, modeBadge }) {
+  const badge = modeBadge[mode] || modeBadge.chat;
+  return (
+    <div className="flex items-center gap-2 ml-2 flex-wrap">
+      <div className="w-7 h-7 bg-slate-800 rounded-lg flex items-center justify-center shadow-sm">
+        <span className="material-symbols-outlined text-white text-[14px]" style={{ fontVariationSettings: '"FILL" 1' }}>
+          assured_workload
+        </span>
+      </div>
+      <span className="text-xs font-semibold text-slate-700">CEDIT</span>
+      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${badge.className}`}>
+        {badge.label}
+      </span>
+      {subtitle && <span className="text-[10px] text-slate-400 w-full sm:w-auto">{subtitle}</span>}
+    </div>
+  );
+}
+
+function getFollowUpSection(content, fullContent) {
+  const text = fullContent || content || '';
+  if (!text.toLowerCase().includes('para alimentar')) return null;
+  const part = text.split(/## Para alimentar/i)[1];
+  return part ? `## Para alimentar${part}` : null;
+}
 
 const ChatInterface = ({
   messages,
@@ -25,18 +55,56 @@ const ChatInterface = ({
   isPremium = false,
   premiumName = '',
   onOpenPremium,
+  onRequestResetMemory,
   apiHeaders,
+  uiLocale = 'es',
 }) => {
+  const { t } = useI18n();
+
+  const modeConfig = useMemo(
+    () => ({
+      chat: { label: t('chat.mode.chat'), icon: 'forum', color: `${ceditCardClass('gray')} text-slate-800` },
+      audit: { label: t('chat.mode.audit'), icon: 'fact_check', color: `${ceditCardClass('blue')} text-blue-900` },
+      plan: { label: t('chat.mode.plan'), icon: 'architecture', color: `${ceditCardClass('gray')} text-slate-800` },
+      freemium: { label: t('chat.mode.freemium'), icon: 'lock', color: `${ceditCardClass('gray')} text-slate-700` },
+    }),
+    [t]
+  );
+
+  const modeBadge = useMemo(
+    () => ({
+      audit: { label: t('chat.badge.audit'), className: 'bg-blue-100 text-blue-900 border border-blue-200' },
+      plan: { label: t('chat.badge.plan'), className: 'bg-slate-100 text-slate-800 border border-slate-200' },
+      freemium: { label: t('chat.badge.limit'), className: 'bg-slate-200 text-slate-800 border border-slate-300' },
+      chat: { label: t('chat.badge.chat'), className: 'bg-slate-100 text-slate-700 border border-slate-200' },
+    }),
+    [t]
+  );
+
   const [inputValue, setInputValue] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [refineTarget, setRefineTarget] = useState(null);
   const [generatingPdf, setGeneratingPdf] = useState(null);
+  const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  const welcomeCards = useMemo(
+    () => [
+      { theme: 'gray', t: t('chat.card.public'), d: t('chat.card.publicDesc'), action: () => onSendMessage(t('chat.prompt.invierte')) },
+      { theme: 'blue', t: t('chat.card.audit'), d: t('chat.card.auditDesc'), action: () => fileInputRef.current?.click() },
+      { theme: 'gray', t: t('chat.card.citizen'), d: t('chat.card.citizenDesc'), action: () => onSendMessage(t('chat.prompt.citizen')) },
+      { theme: 'blue', t: t('chat.card.concepts'), d: t('chat.card.conceptsDesc'), action: () => onSendMessage(t('chat.prompt.concepts')) },
+    ],
+    [t, onSendMessage]
+  );
+
   const messageCount = usage.count ?? 0;
   const freeLimit = usage.limit ?? 10;
-  const isPremiumSession = sessionMode === 'audit' || sessionMode === 'plan' || messages.some((m) => m.isAudit || m.showPdf);
+  const isPremiumSession =
+    sessionMode === 'audit' ||
+    sessionMode === 'plan' ||
+    messages.some((m) => m.consumesAuditCredit || m.isAudit || m.showPdf);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -87,12 +155,12 @@ const ChatInterface = ({
     if (file?.type === 'application/pdf') {
       setSelectedFile(file);
       if (!inputValue.trim()) {
-        setInputValue(`Audita este plan de proyecto para aprobación en el MEF: ${file.name}`);
+        setInputValue(`${t('chat.uploadAuditPrefix')} ${file.name}`);
       }
-    } else if (file) alert('Solo archivos PDF.');
+    } else if (file) alert(t('chat.pdfOnly'));
   };
 
-  const handleGeneratePDF = async (msg, index) => {
+  const runGeneratePDF = async (msg, index, pdfOutputLanguage = 'es') => {
     setGeneratingPdf(index);
     try {
       const content = msg.fullContent || msg.content;
@@ -100,26 +168,39 @@ const ChatInterface = ({
         role: m.role === 'user' ? 'user' : 'assistant',
         content: m.fullContent || m.content,
       }));
-      const headersConfig = typeof apiHeaders === 'function' 
-        ? apiHeaders() 
-        : apiHeaders 
-          ? apiHeaders 
-          : { headers: { 'X-User-Id': userId } };
+      const headersConfig =
+        typeof apiHeaders === 'function'
+          ? apiHeaders()
+          : apiHeaders || { headers: { 'X-User-Id': userId, 'X-Locale': uiLocale } };
 
       const response = await axios.post(
         '/api/generate-pdf',
         {
-          content,
+          content: msg.fullContent || content,
           title: msg.filename ? `Plan MEF — ${msg.filename}` : 'Plan Técnico Oficial CEDIT',
-          project_name: 'Proyecto de Inversión Pública',
+          project_name: msg.filename ? msg.filename.replace(/\.pdf$/i, '') : 'Proyecto de Inversión Pública',
           history,
           user_id: userId,
+          audit_opinion: msg.opinion || '',
+          audit_dictamen: msg.dictamen || '',
+          source_document: msg.sourceExcerpt || '',
+          is_audit: Boolean(msg.isAudit || msg.showPdf),
+          pdf_output_language: pdfOutputLanguage,
         },
-        { responseType: 'blob', ...headersConfig }
+        { responseType: 'blob', timeout: 300000, ...headersConfig }
       );
-      const hash = response.headers['x-blockchain-hash'];
-      if (hash) {
-        /* parent could read via callback; optional */
+      const hash = response.headers['x-blockchain-hash'] || '';
+      const mefScore = parseInt(response.headers['x-mef-score'] || '0', 10);
+      const meets = response.headers['x-mef-meets-threshold'] === '1';
+      if (meets && mefScore >= 80) {
+        saveExpediente({
+          title: msg.filename ? `Plan MEF — ${msg.filename}` : 'Plan Técnico Oficial CEDIT',
+          projectName: msg.filename?.replace(/\.pdf$/i, '') || '',
+          score: mefScore,
+          docScore: msg.mefScore?.document_only_index,
+          hash,
+          pdfLanguage: pdfOutputLanguage,
+        });
       }
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
       const link = document.createElement('a');
@@ -153,13 +234,21 @@ const ChatInterface = ({
     }
   };
 
+  const handleGeneratePDF = (msg, index) => {
+    if (uiLocale && uiLocale !== 'es') {
+      setPdfLangModal({ open: true, msg, index });
+      return;
+    }
+    runGeneratePDF(msg, index, 'es');
+  };
+
   const startRefine = (msg) => {
     setRefineTarget(msg.fullContent || msg.content);
-    setInputValue('Corrije el plan: ');
+    setInputValue(`${t('chat.refinePlan')}: `);
     document.getElementById('chat-textarea')?.focus();
   };
 
-  const modeCfg = MODE_CONFIG[sessionMode] || MODE_CONFIG.chat;
+  const modeCfg = modeConfig[sessionMode] || modeConfig.chat;
 
   return (
     <main className="flex-1 relative flex flex-col h-full w-full bg-background overflow-hidden">
@@ -180,24 +269,50 @@ const ChatInterface = ({
             <span className="material-symbols-outlined text-base">{modeCfg.icon}</span>
             {modeCfg.label}
             {sessionMode === 'audit' && (
-              <span className="text-[10px] font-normal opacity-80 ml-2">— Opinión + puntos fuertes + dictamen</span>
+              <span className="text-[10px] font-normal opacity-80 ml-2">{t('chat.auditSubtitle')}</span>
             )}
           </div>
         </div>
       )}
 
-      {/* Freemium */}
+      {freemiumExceeded && !isPremium && (
+        <div className={`shrink-0 w-full border-b px-4 py-3 flex justify-center z-20 cedit-mode-enter ${ceditCardClass('blue', 'rounded-none border-x-0 border-t-0')}`}>
+          <div className="w-full max-w-[850px] flex flex-col sm:flex-row items-center gap-3 text-center sm:text-left">
+            <div className="flex-1 text-sm text-blue-900">
+              <strong>{t('chat.limitBanner', { count: messageCount, limit: freeLimit })}</strong>
+            </div>
+            <div className="flex flex-wrap gap-2 justify-center">
+              <button
+                type="button"
+                onClick={onRequestResetMemory}
+                className={ceditBtnSecondaryClass().replace('rounded-xl', 'rounded-full').replace('text-xs font-semibold', 'text-xs font-bold')}
+              >
+                {t('chat.resetMemory')}
+              </button>
+              <button
+                type="button"
+                onClick={onOpenPremium}
+                className={ceditBtnPrimaryClass('blue').replace('rounded-xl', 'rounded-full')}
+              >
+                {t('chat.premiumPlan')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Freemium bar */}
       {(isPremiumSession || isPremium) && (
         <div className="shrink-0 w-full bg-white/90 backdrop-blur border-b border-border-gray px-4 py-2 flex justify-center z-10">
           <div className="w-full max-w-[850px] flex items-center gap-3">
             <span className="text-xs text-slate-500 flex items-center gap-1">
               <span className="material-symbols-outlined text-[14px]">bolt</span>
-              {messageCount}/{freeLimit} auditorías
+              {t('chat.auditsBar', { count: messageCount, limit: freeLimit })}
             </span>
             <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-700 ${
-                  freemiumExceeded ? 'bg-red-500' : messageCount >= freeLimit - 2 ? 'bg-amber-500' : 'bg-emerald-500'
+                  freemiumExceeded ? 'bg-blue-800' : messageCount >= freeLimit - 2 ? 'bg-slate-500' : 'bg-blue-600'
                 }`}
                 style={{ width: `${Math.min((messageCount / freeLimit) * 100, 100)}%` }}
               />
@@ -208,20 +323,19 @@ const ChatInterface = ({
                   <span className="material-symbols-outlined text-[14px]">diamond</span>
                   Premium · {premiumName}
                 </span>
-                <span className="text-[10px] text-slate-500">Auditorías ilimitadas</span>
+                <span className="text-[10px] text-slate-500">{t('chat.unlimitedAudits')}</span>
               </>
             ) : freemiumExceeded ? (
               <button
                 type="button"
-                onClick={onOpenPremium}
-                className="text-[11px] font-bold text-white bg-gradient-to-r from-amber-500 to-amber-600 px-3 py-1 rounded-full hover:opacity-90 flex items-center gap-1"
+                onClick={onRequestResetMemory}
+                className="text-[11px] font-bold text-white bg-blue-800 px-3 py-1 rounded-full hover:bg-blue-900"
               >
-                <span className="material-symbols-outlined text-[12px]">account_balance_wallet</span>
-                Activar modo Premium
+                {t('chat.resetMemory')}
               </button>
             ) : (
-              <button type="button" onClick={onOpenPremium} className="text-[10px] text-slate-500 hover:text-amber-700">
-                Premium
+              <button type="button" onClick={onOpenPremium} className="text-[10px] text-slate-500 hover:text-blue-700">
+                {t('chat.premium')}
               </button>
             )}
           </div>
@@ -235,25 +349,27 @@ const ChatInterface = ({
               <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center shadow-lg mb-6 cedit-float">
                 <span className="material-symbols-outlined text-white text-3xl" style={{ fontVariationSettings: '"FILL" 1' }}>assured_workload</span>
               </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-3">Consejero Estatal Digital</h2>
-              <p className="text-slate-600 max-w-2xl mb-10">
-                Chat normativo, auditoría de planes PDF y documentos MEF — misma experiencia que en Discord.
-              </p>
+              <h2 className="text-2xl font-bold text-slate-800 mb-3">{t('chat.welcomeTitle')}</h2>
+              <p className="text-sm font-medium text-slate-500 mb-2">{t('app.subtitle')}</p>
+              <p className="text-slate-600 max-w-2xl mb-4">{t('chat.welcomeRole')}</p>
+              <p className="text-slate-500 text-sm max-w-2xl mb-10">{t('chat.welcomeHint')}</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
-                {[
-                  { t: 'Servidores Públicos', d: 'Registrar proyecto en Invierte.pe', action: () => onSendMessage('¿Cuáles son los pasos para registrar un proyecto en Invierte.pe?') },
-                  { t: 'Auditoría MEF', d: 'Sube tu plan en PDF', action: () => fileInputRef.current?.click() },
-                  { t: 'Ciudadanos', d: 'Derechos administrativos', action: () => onSendMessage('¿Qué derechos tengo si una entidad pública no responde mi solicitud?') },
-                  { t: 'Conceptos', d: 'Perfil vs expediente técnico', action: () => onSendMessage('Explícame la diferencia entre perfil y expediente técnico.') },
-                ].map((card) => (
+                {welcomeCards.map((card) => (
                   <button
                     key={card.t}
                     type="button"
-                    className="text-left bg-white border border-border-gray p-5 rounded-xl hover:border-red-300 hover:shadow-md transition-all duration-300 cedit-card-hover"
+                    className={`text-left p-5 ${ceditCardClass(card.theme)} hover:shadow-md transition-all duration-300 cedit-card-hover`}
                     onClick={card.action}
                   >
-                    <h3 className="text-sm font-bold text-slate-800 mb-1">{card.t}</h3>
-                    <p className="text-sm text-slate-600">{card.d}</p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className={ceditIconBoxClass(card.theme, 'w-8 h-8')}>
+                        <span className="material-symbols-outlined text-white text-base">
+                          {card.theme === 'blue' ? 'fact_check' : card.theme === 'gray' ? 'groups' : 'account_balance'}
+                        </span>
+                      </div>
+                      <h3 className="text-sm font-bold text-slate-800">{card.t}</h3>
+                    </div>
+                    <p className="text-sm text-slate-600 pl-10">{card.d}</p>
                   </button>
                 ))}
               </div>
@@ -269,7 +385,7 @@ const ChatInterface = ({
                   <div className="bg-white border border-border-gray p-5 rounded-2xl rounded-tr-md max-w-[85%] shadow-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="material-symbols-outlined text-slate-400 text-sm">person</span>
-                      <span className="text-xs text-slate-500">Tú</span>
+                      <span className="text-xs text-slate-500">{t('chat.you')}</span>
                     </div>
                     <div className="prose prose-sm max-w-none text-slate-800">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
@@ -277,82 +393,164 @@ const ChatInterface = ({
                   </div>
                 ) : (
                   <div className="w-full max-w-[95%] flex flex-col gap-2">
-                    <div className="flex items-center gap-2 ml-2">
-                      <div className="w-6 h-6 bg-slate-800 rounded-md flex items-center justify-center">
-                        <span className="material-symbols-outlined text-white text-[12px]" style={{ fontVariationSettings: '"FILL" 1' }}>assured_workload</span>
-                      </div>
-                      <span className="text-xs font-semibold text-slate-700">CEDIT Asesor</span>
-                      {msg.mode === 'audit' && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-bold uppercase">Auditoría</span>
-                      )}
-                    </div>
+                    <BotMessageHeader
+                      mode={msg.mode || (msg.isAudit ? 'audit' : 'chat')}
+                      subtitle={msg.isDocAck ? t('chat.docReceived') : null}
+                      modeBadge={modeBadge}
+                    />
 
-                    <div className={`bg-white border p-6 sm:p-8 rounded-2xl rounded-tl-md shadow-sm ${msg.isAudit ? 'cedit-audit-glow border-red-100' : 'border-border-gray'}`}>
-                      {msg.isAudit && msg.opinion && (
-                        <div className="mb-4 p-4 rounded-xl bg-gradient-to-br from-red-50 to-amber-50 border border-red-100 cedit-fade-in">
-                          <p className="text-[10px] font-bold uppercase text-red-800 mb-2 flex items-center gap-1">
-                            <span className="material-symbols-outlined text-sm">favorite</span>
-                            Mi opinión (para guiarte)
-                          </p>
-                          <div className="prose prose-sm text-slate-800">
-                            <ReactMarkdown>{msg.opinion || msg.content.split('##')[0]}</ReactMarkdown>
+                    <div
+                      className={`p-6 sm:p-8 rounded-2xl rounded-tl-md transition-shadow duration-300 ${
+                        msg.isAudit || msg.isDocAck
+                          ? `cedit-audit-glow ${ceditCardClass('blue')}`
+                          : msg.mode === 'freemium'
+                            ? ceditCardClass('gray')
+                            : `${ceditCardClass('gray')} hover:shadow-md`
+                      }`}
+                    >
+                      {msg.isDocAck && (
+                        <div className={`mb-4 p-4 ${ceditCardClass('gray')} cedit-fade-in flex gap-3`}>
+                          <div className={ceditIconBoxClass('gray', 'w-9 h-9')}>
+                            <span className="material-symbols-outlined text-white text-lg">description</span>
+                          </div>
+                          <div className="prose prose-sm max-w-none text-slate-800 flex-1">
+                            <ReactMarkdown>{msg.content}</ReactMarkdown>
                           </div>
                         </div>
                       )}
 
-                      <div className="prose prose-sm max-w-none text-slate-800">
-                        <ReactMarkdown>{msg.isAudit && msg.opinion ? (msg.strengths ? `### Puntos fuertes\n${msg.strengths}` : '') : msg.content}</ReactMarkdown>
-                        {msg.isAudit && msg.opinion && msg.content.includes('## Dictamen') && (
-                          <details className="mt-4 group">
-                            <summary className="cursor-pointer text-sm font-semibold text-slate-700 hover:text-red-800 transition-colors">
-                              Ver dictamen técnico completo
-                            </summary>
-                            <div className="mt-2 pt-2 border-t">
-                              <ReactMarkdown>{msg.fullContent || msg.content}</ReactMarkdown>
+                      {msg.isAudit && msg.opinion && !msg.isDocAck && (
+                        <div className={`mb-4 p-4 ${ceditCardClass('blue')} cedit-fade-in`}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className={ceditIconBoxClass('blue', 'w-8 h-8')}>
+                              <span className="material-symbols-outlined text-white text-base">favorite</span>
                             </div>
-                          </details>
-                        )}
-                      </div>
+                            <p className={ceditLabelClass('blue')}>{t('chat.myOpinion')}</p>
+                          </div>
+                          <div className="prose prose-sm max-w-none text-slate-800">
+                            <ReactMarkdown>{msg.opinion}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
 
-                      {shouldShowPdfButton(msg) && (
-                        <div className="mt-6 bg-gradient-to-r from-red-50 to-amber-50 rounded-xl p-5 border border-red-100 text-center cedit-pdf-cta">
-                          <p className="text-xs font-bold text-slate-800 uppercase mb-1">Documento para el MEF</p>
-                          <p className="text-[11px] text-slate-600 mb-4 max-w-md mx-auto">
-                            El botón genera el <strong>plan técnico oficial</strong> con estructura Invierte.pe. La opinión y puntos fuertes ya están arriba.
+                      {msg.mefScore && !msg.isDocAck && (
+                        <MefScoreCard score={msg.mefScore} className="mb-4 p-4 rounded-2xl border border-slate-200 bg-white" />
+                      )}
+
+                      {!msg.isDocAck && (
+                        <div className="prose prose-sm max-w-none text-slate-800">
+                          {msg.isAudit && msg.opinion ? (
+                            msg.strengths ? (
+                              <>
+                                <div className={`mb-4 p-4 ${ceditCardClass('gray')}`}>
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <div className={ceditIconBoxClass('gray', 'w-8 h-8')}>
+                                      <span className="material-symbols-outlined text-white text-base">check_circle</span>
+                                    </div>
+                                    <p className={`${ceditLabelClass('gray')} not-prose`}>{t('chat.strengths')}</p>
+                                  </div>
+                                  <div className="prose prose-sm max-w-none text-slate-800">
+                                    <ReactMarkdown>{msg.strengths}</ReactMarkdown>
+                                  </div>
+                                </div>
+                              </>
+                            ) : null
+                          ) : (
+                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                          )}
+                        </div>
+                      )}
+
+                      {msg.isAudit && msg.opinion && !msg.isDocAck && (msg.content?.includes('## Dictamen') || msg.fullContent?.includes('## Dictamen')) && (
+                        <details className="mt-4 group cedit-fade-in">
+                          <summary className="cursor-pointer text-sm font-semibold text-slate-700 hover:text-blue-800 transition-colors list-none flex items-center gap-1">
+                            <span className="material-symbols-outlined text-base group-open:rotate-90 transition-transform">chevron_right</span>
+                            {t('chat.fullDictamen')}
+                          </summary>
+                          <div className="mt-3 pt-3 border-t border-slate-100 prose prose-sm max-w-none text-slate-800">
+                            <ReactMarkdown>
+                              {stripMefIndexMarkdown(msg.fullContent || msg.content)}
+                            </ReactMarkdown>
+                          </div>
+                        </details>
+                      )}
+
+                      {getFollowUpSection(msg.content, msg.fullContent) && (
+                        <div className={`mt-4 p-4 ${ceditCardClass('gray')} cedit-fade-in`}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <div className={ceditIconBoxClass('blue', 'w-8 h-8')}>
+                              <span className="material-symbols-outlined text-white text-base">edit_note</span>
+                            </div>
+                            <p className={ceditLabelClass('blue')}>{t('chat.pdfData')}</p>
+                          </div>
+                          <div className="prose prose-sm max-w-none text-slate-800">
+                            <ReactMarkdown>{getFollowUpSection(msg.content, msg.fullContent)}</ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+
+                      {msg.isFreemiumBlock && (
+                        <div className="mt-4 flex flex-wrap gap-2 cedit-fade-in">
+                          <button
+                            type="button"
+                            onClick={onRequestResetMemory}
+                            className={ceditBtnPrimaryClass('blue').replace('rounded-xl', 'rounded-full')}
+                          >
+                            {t('chat.resetMemory')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onOpenPremium}
+                            className={ceditBtnPrimaryClass('blue').replace('rounded-xl', 'rounded-full')}
+                          >
+                            {t('chat.connectWallet')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                      {shouldShowPdfButton(msg) && !msg.isDocAck && (
+                        <div className={`mt-2 p-5 text-center cedit-pdf-cta ${ceditCardClass('blue')}`}>
+                          <div className="flex justify-center mb-3">
+                            <div className={ceditIconBoxClass('blue', 'w-11 h-11')}>
+                              <span className="material-symbols-outlined text-white text-2xl">picture_as_pdf</span>
+                            </div>
+                          </div>
+                          <p className={`text-xs font-bold uppercase mb-1 ${ceditLabelClass('blue').replace('flex items-center gap-1', '')}`}>
+                            {t('chat.mefDoc')}
                           </p>
+                          <p className="text-[11px] text-slate-600 mb-4 max-w-md mx-auto">{t('chat.mefDocHint')}</p>
                           <div className="flex flex-wrap gap-2 justify-center">
                             <button
                               type="button"
                               onClick={() => handleGeneratePDF(msg, index)}
                               disabled={generatingPdf === index || freemiumExceeded}
-                              className="px-5 py-2.5 text-xs font-bold text-white rounded-full bg-gradient-to-r from-red-700 to-red-600 shadow-md hover:scale-[1.03] transition-all disabled:opacity-50 cedit-pulse-btn"
+                              className={`${ceditBtnPrimaryClass('blue')} cedit-pulse-btn min-w-[200px]`}
                             >
-                              {generatingPdf === index ? 'Generando PDF...' : 'Generar Plan Técnico Oficial (PDF)'}
+                              <span className="material-symbols-outlined text-sm">download</span>
+                              {generatingPdf === index ? t('chat.genPdfLoading') : t('chat.genPdf')}
                             </button>
                             <button
                               type="button"
                               onClick={() => startRefine(msg)}
-                              className="px-4 py-2.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-full hover:border-blue-400 transition-all"
+                              className={ceditBtnSecondaryClass()}
                             >
-                              Corregir plan
+                              {t('chat.refinePlan')}
                             </button>
                           </div>
                         </div>
                       )}
 
-                      {(msg.isAudit || messages[index - 1]?.isFile) && (
-                        <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-3 cedit-fade-in">
-                          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                          <p className="text-xs text-slate-600 font-mono">
-                            Syscoin: {blockchainHash || 'registro pendiente'}
-                          </p>
-                        </div>
-                      )}
-                    </div>
+                    {(msg.isAudit || messages[index - 1]?.isFile) && !msg.isDocAck && (
+                      <div className="mt-2 px-2 py-2 bg-slate-100 rounded-lg border border-slate-200 flex items-center gap-2 text-xs text-slate-600">
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                        Syscoin: {blockchainHash || 'registro pendiente'}
+                      </div>
+                    )}
 
-                    <div className="flex justify-between px-2">
+                    <div className="flex justify-between px-2 mt-1">
                       <button type="button" className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1" onClick={() => navigator.clipboard.writeText(msg.fullContent || msg.content)}>
-                        <span className="material-symbols-outlined text-[16px]">content_copy</span> Copiar
+                        <span className="material-symbols-outlined text-[16px]">content_copy</span> {t('chat.copy')}
                       </button>
                     </div>
                   </div>
@@ -362,13 +560,20 @@ const ChatInterface = ({
           )}
 
           {isLoading && (
-            <div className="cedit-message-enter flex gap-2 ml-2">
-              <div className="bg-white border border-border-gray p-6 rounded-2xl">
+            <div className="cedit-message-enter flex flex-col gap-2 w-full max-w-[95%]">
+              <BotMessageHeader
+                mode={sessionMode === 'audit' ? 'audit' : sessionMode === 'plan' ? 'plan' : 'chat'}
+                modeBadge={modeBadge}
+              />
+              <div className="bg-white border border-border-gray p-6 rounded-2xl rounded-tl-md shadow-sm flex items-center gap-4">
                 <div className="flex gap-1.5">
                   {[0, 150, 300].map((d) => (
-                    <div key={d} className="w-2 h-2 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                    <div key={d} className="w-2 h-2 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: `${d}ms` }} />
                   ))}
                 </div>
+                <p className="text-sm text-slate-600">
+                  {sessionMode === 'audit' ? t('chat.reviewing') : t('chat.consulting')}
+                </p>
               </div>
             </div>
           )}
@@ -379,13 +584,15 @@ const ChatInterface = ({
       <div className="shrink-0 border-t border-border-gray bg-background px-4 py-4 flex justify-center">
         <div className="w-full max-w-[850px]">
           {refineTarget && (
-            <p className="text-[11px] text-blue-800 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-2 cedit-fade-in">
-              Modo corrección: describe los cambios y pulsa Analizar (llama a /api/refine-plan).
+            <p className={`text-[11px] rounded-xl px-3 py-2 mb-2 cedit-fade-in ${ceditCardClass('gray')}`}>
+              {t('chat.refineMode')}
             </p>
           )}
           {selectedFile && (
-            <div className="mb-2 flex items-center gap-2 text-sm bg-red-50 border border-red-100 rounded-lg px-3 py-2 cedit-fade-in">
-              <span className="material-symbols-outlined text-red-600">picture_as_pdf</span>
+            <div className={`mb-2 flex items-center gap-2 text-sm rounded-xl px-3 py-2 cedit-fade-in ${ceditCardClass('blue')}`}>
+              <div className={ceditIconBoxClass('blue', 'w-7 h-7')}>
+                <span className="material-symbols-outlined text-white text-sm">picture_as_pdf</span>
+              </div>
               <span className="truncate flex-1 font-medium">{selectedFile.name}</span>
               <button type="button" onClick={() => setSelectedFile(null)} className="text-slate-400 hover:text-slate-800">
                 <span className="material-symbols-outlined text-sm">close</span>
@@ -396,7 +603,7 @@ const ChatInterface = ({
             <textarea
               id="chat-textarea"
               className="w-full border-0 focus:ring-0 resize-none py-4 px-5 text-slate-800 placeholder:text-slate-400 min-h-[60px] bg-transparent"
-              placeholder={refineTarget ? 'Ej: Aumenta el presupuesto de supervisión al 8%...' : 'Consulta normativa o adjunta plan PDF para auditoría MEF...'}
+              placeholder={refineTarget ? t('chat.placeholderRefine') : t('chat.placeholder')}
               rows={1}
               value={inputValue}
               onChange={handleInput}
@@ -418,14 +625,25 @@ const ChatInterface = ({
                 type="button"
                 className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-slate-900 transition-colors"
                 onClick={handleSend}
-                disabled={(!inputValue.trim() && !selectedFile) || isLoading}
+                disabled={(!inputValue.trim() && !selectedFile) || isLoading || (freemiumExceeded && !refineTarget)}
               >
-                {refineTarget ? 'Aplicar corrección' : 'Analizar'}
+                {refineTarget ? t('chat.applyFix') : t('chat.analyze')}
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      <PdfLanguageModal
+        isOpen={pdfLangModal.open}
+        uiLocale={uiLocale}
+        onClose={() => setPdfLangModal({ open: false, msg: null, index: null })}
+        onConfirm={(lang) => {
+          const { msg, index } = pdfLangModal;
+          setPdfLangModal({ open: false, msg: null, index: null });
+          if (msg != null && index != null) runGeneratePDF(msg, index, lang);
+        }}
+      />
     </main>
   );
 };

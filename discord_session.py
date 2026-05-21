@@ -77,10 +77,23 @@ class ConversationSession:
             self._blob["history"] = self.history[-16:]
         self.save()
 
-    def set_plan(self, content: str, filename: str = "") -> None:
+    def set_plan(
+        self,
+        content: str,
+        filename: str = "",
+        opinion: str = "",
+        dictamen: str = "",
+        source_excerpt: str = "",
+    ) -> None:
         self._blob["last_plan"] = content
         if filename:
             self._blob["filename"] = filename
+        if opinion:
+            self._blob["audit_opinion"] = opinion
+        if dictamen:
+            self._blob["audit_dictamen"] = dictamen
+        if source_excerpt:
+            self._blob["source_excerpt"] = source_excerpt
         self.save()
 
     def get_plan(self) -> str:
@@ -88,6 +101,13 @@ class ConversationSession:
 
     def get_filename(self) -> str:
         return self._blob.get("filename", "")
+
+    def get_audit_meta(self) -> dict:
+        return {
+            "opinion": self._blob.get("audit_opinion", ""),
+            "dictamen": self._blob.get("audit_dictamen", ""),
+            "source_excerpt": self._blob.get("source_excerpt", ""),
+        }
 
     def usage(self) -> Dict[str, Any]:
         count = int(self._blob.get("audit_count", 0))
