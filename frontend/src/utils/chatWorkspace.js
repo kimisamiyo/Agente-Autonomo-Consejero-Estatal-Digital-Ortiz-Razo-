@@ -22,6 +22,9 @@ function trimMessage(m) {
     isFile: m.isFile,
     isDocAck: m.isDocAck,
     isFreemiumBlock: m.isFreemiumBlock,
+    guidePhase: m.guidePhase,
+    guideCompleteness: m.guideCompleteness,
+    checkpointId: m.checkpointId,
   };
 }
 
@@ -52,6 +55,8 @@ export function createEmptyChat(id) {
     messages: [],
     sessionMode: 'chat',
     blockchainHash: null,
+    decisionCheckpoints: [],
+    nodePositions: {},
     updatedAt: Date.now(),
   };
 }
@@ -63,6 +68,8 @@ function trimChat(chat) {
     messages: (chat.messages || []).slice(-MAX_MESSAGES).map(trimMessage),
     sessionMode: chat.sessionMode || 'chat',
     blockchainHash: chat.blockchainHash || null,
+    decisionCheckpoints: (chat.decisionCheckpoints || []).slice(-8),
+    nodePositions: chat.nodePositions || {},
     updatedAt: chat.updatedAt || Date.now(),
   };
 }
@@ -123,13 +130,23 @@ export function saveFreshWorkspace(chat) {
   return single;
 }
 
-export function packActiveChat({ conversationId, messages, sessionMode, blockchainHash, title }) {
+export function packActiveChat({
+  conversationId,
+  messages,
+  sessionMode,
+  blockchainHash,
+  title,
+  decisionCheckpoints,
+  nodePositions,
+}) {
   return trimChat({
     id: conversationId,
     title: title || deriveChatTitle(messages),
     messages,
     sessionMode,
     blockchainHash,
+    decisionCheckpoints,
+    nodePositions,
     updatedAt: Date.now(),
   });
 }

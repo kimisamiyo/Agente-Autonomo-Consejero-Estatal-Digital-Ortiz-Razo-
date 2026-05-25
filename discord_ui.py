@@ -14,10 +14,10 @@ PERU_DARK_RED = 0x8B0000
 PERU_GOLD = 0xD4AF37
 PERU_WHITE = 0xF8F9FA
 
-FLAG_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Flag_of_Peru.svg/320px-Flag_of_Peru.png"
+FLAG_URL = "https://flagcdn.com/w80/pe.png"
 BRAND_NAME = "Consejero Estatal Digital"
-BRAND_HEADER = "🇵🇪 🏛️ CEDIT"
-SLOGAN = "Al servicio del Perú 🇵🇪"
+BRAND_HEADER = "🏛️ CEDIT"
+SLOGAN = "Al servicio del Perú"
 
 
 def format_query_timestamp(when: Optional[datetime.datetime] = None) -> str:
@@ -222,6 +222,44 @@ def audit_bar_embed(
     return e
 
 
+def guide_graph_embed(
+    guide_graph: dict,
+    requested_by: Optional[discord.abc.User] = None,
+) -> discord.Embed:
+    """Recorrido del grafo mentor (fase, nodos, completitud)."""
+    phase = guide_graph.get("phase_name", "—")
+    mentor = guide_graph.get("mentor_message", "")
+    exp = guide_graph.get("completeness_pct", 0)
+    prof = guide_graph.get("profile_completeness_pct", 0)
+    trail = guide_graph.get("trail") or []
+    trail_txt = " → ".join(trail[-5:]) if trail else "—"
+    nodes = guide_graph.get("nodes") or []
+    current = next((n for n in nodes if n.get("status") == "current"), None)
+    node_label = current.get("label", phase) if current else phase
+
+    lines = [
+        f"**Fase:** {phase} · **Nodo:** {node_label}",
+        f"**Expediente:** {exp}% · **Perfil:** {prof}%",
+        f"_{mentor}_",
+        f"`{trail_txt}`",
+    ]
+    if guide_graph.get("pdf_ready"):
+        lines.append("\n✅ **Listo para Plan Técnico Oficial (PDF)**")
+
+    crit = guide_graph.get("critical_items") or []
+    pending = [c["label"].split("(")[0].strip()[:24] for c in crit if not c.get("collected")][:3]
+    if pending:
+        lines.append("\n**Foco datos:** " + ", ".join(pending))
+
+    e = discord.Embed(
+        title="🧭 Recorrido del mentor CEDIT",
+        description="\n".join(lines),
+        color=PERU_GOLD if guide_graph.get("pdf_ready") else PERU_RED,
+    )
+    apply_peru_branding(e, requested_by=requested_by, thumbnail=False)
+    return e
+
+
 def response_embed(
     body: str,
     mode: str = "chat",
@@ -250,22 +288,23 @@ def response_embed(
         return e
 
     colors = {"chat": PERU_RED, "audit": PERU_RED, "plan": PERU_GOLD}
-    intros = {
-        "chat": "A continuación, mi orientación según la normativa vigente del Estado peruano:\n\n",
-        "audit": "He revisado su expediente. Resumen:\n\n",
-        "plan": "Respecto a su **plan de inversión**:\n\n",
-    }
-    intro = intros.get(mode, intros["chat"])
-    content = intro + (body[:3600] if body else "—")
+    if mode == "chat":
+        content = body[:3600] if body else "—"
+    else:
+        intros = {
+            "audit": "He revisado su expediente. Resumen:\n\n",
+            "plan": "Respecto a su **plan de inversión**:\n\n",
+        }
+        intro = intros.get(mode, "")
+        content = intro + (body[:3600] if body else "—")
     if len(body) > 3600:
         content += "\n\n… *(respuesta recortada por límite de Discord)*"
 
     e = discord.Embed(
-        title="💬 Consulta normativa" if mode == "chat" else None,
         description=content,
         color=colors.get(mode, PERU_RED),
     )
-    apply_peru_branding(e, requested_by=requested_by, thumbnail=mode == "chat")
+    apply_peru_branding(e, requested_by=requested_by, thumbnail=(mode == "chat"))
 
     if filename:
         e.add_field(name="📄 Expediente", value=f"`{filename}`", inline=True)

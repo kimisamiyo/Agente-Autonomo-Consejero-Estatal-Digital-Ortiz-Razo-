@@ -34,6 +34,13 @@ export function formatChatError(error, { n8nAttempted = false } = {}) {
       'La app ya intentó la API directa en `/api/chat`.'
     );
   }
+  if (st === 502) {
+    return (
+      'El servidor API no respondió (502). Inicie uvicorn **desde la carpeta CEDIT** (donde está api.py): ' +
+      '`cd C:\\Users\\mayro\\Downloads\\CEDIT\\CEDIT` y luego `python -m uvicorn api:app --reload --port 8000`. ' +
+      'Compruebe http://127.0.0.1:8000/docs'
+    );
+  }
   if (st === 500 && detailStr) {
     return `Error del servidor: ${detailStr}`;
   }

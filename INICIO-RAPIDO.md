@@ -10,15 +10,27 @@ cmd /c "n8n"
 cmd /c "npm run dev"
 ```
 
-### `venv` no encontrado
+### `venv` no encontrado / bot Discord no arranca
+
 El entorno virtual está en la carpeta **padre** del proyecto:
 
 ```powershell
 cd C:\Users\mayro\Downloads\CEDIT
-.\venv\Scripts\activate
-cd CEDIT
-uvicorn api:app --reload
+python -m venv venv
+cd CEDIT\scripts
+instalar-venv.bat
 ```
+
+Si la ventana **CEDIT Discord** se cierra al instante, suele faltar `discord.py` u otra librería en el venv. `instalar-venv.bat` las instala.
+
+Luego arranque el bot manualmente para ver errores:
+
+```cmd
+cd C:\Users\mayro\Downloads\CEDIT\CEDIT
+C:\Users\mayro\Downloads\CEDIT\venv\Scripts\python.exe bot.py
+```
+
+Debe aparecer: `Shard ID None has connected to Gateway`. El `.env` necesita `DISCORD_TOKEN=...`.
 
 ### Proxy `/api/usage` ECONNREFUSED
 El frontend (5173) necesita la API en **8000**. Levanta `uvicorn` antes que `npm run dev`.
@@ -89,13 +101,36 @@ Detalle en `n8n/README.md`.
 
 ---
 
-## Tres terminales
+## Cuatro terminales (todo el ecosistema)
 
-| Terminal | Comando |
-|----------|---------|
-| API | `uvicorn api:app --reload` (desde `CEDIT\CEDIT` con venv activo) |
-| Web | `cd frontend` → `cmd /c "npm run dev"` |
-| Discord | `python bot.py` |
+**Un clic (Windows):** doble clic o desde cmd:
+
+```cmd
+cd C:\Users\mayro\Downloads\CEDIT\CEDIT\scripts
+iniciar-cedit.bat
+```
+
+Abre **4 ventanas** separadas:
+
+| Ventana | Servicio | URL / notas |
+|---------|----------|-------------|
+| **CEDIT API :8000** | Backend FastAPI (`uvicorn`) | http://127.0.0.1:8000 |
+| **CEDIT Web :5173** | Frontend React (Vite) | http://127.0.0.1:5173 |
+| **CEDIT Discord** | Bot Discord (`bot.py`) | Requiere token en `.env` |
+| **CEDIT n8n :5678** | Automatización / webhooks | http://127.0.0.1:5678 — Active flujos 02 y 01 |
+
+### Manual (si prefiere una terminal por servicio)
+
+| Terminal | Comandos |
+|----------|----------|
+| **Back** | `cd C:\Users\mayro\Downloads\CEDIT` → `.\venv\Scripts\activate` → `cd CEDIT` → `uvicorn api:app --reload` |
+| **Front** | `cd C:\Users\mayro\Downloads\CEDIT\CEDIT\frontend` → `cmd /c "npm run dev"` |
+| **Bot** | `cd C:\Users\mayro\Downloads\CEDIT` → `.\venv\Scripts\activate` → `cd CEDIT` → `python bot.py` |
+| **Agente (n8n)** | `cmd /c "n8n"` → importar workflows → **Active** en 02 y 01 |
+
+El **agente** (lógica CEDIT + RAG) vive dentro del **backend** (`cedit_core.py` + `api.py`). **n8n** es la capa de automatización opcional entre web y API.
+
+Orden recomendado: **API** → esperar carga de embeddings → **Web** → **Bot** / **n8n** si los usa.
 
 ## Nombre y avatar del bot
 

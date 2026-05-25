@@ -20,6 +20,12 @@ import {
   FREE_CHAT_SLOTS,
 } from './utils/chatWorkspace';
 import { postChatMessage, formatChatError } from './utils/chatApi';
+import {
+  appendCheckpoint,
+  pruneCheckpointsAfter,
+  shouldCreateCheckpoint,
+  trimCheckpointForStorage,
+} from './utils/auditDecisionPoints';
 
 const FREE_LIMIT = 10;
 
@@ -93,6 +99,11 @@ function App() {
   const [messages, setMessages] = useState(initial.current.active.messages || []);
   const [sessionMode, setSessionMode] = useState(initial.current.active.sessionMode || 'chat');
   const [blockchainHash, setBlockchainHash] = useState(initial.current.active.blockchainHash || null);
+  const [decisionCheckpoints, setDecisionCheckpoints] = useState(
+    initial.current.active.decisionCheckpoints || []
+  );
+  const [nodePositions, setNodePositions] = useState(initial.current.active.nodePositions || {});
+  const [activeCheckpointId, setActiveCheckpointId] = useState(null);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -133,6 +144,8 @@ function App() {
         messages: override.messages ?? messages,
         sessionMode: override.sessionMode ?? sessionMode,
         blockchainHash: override.blockchainHash ?? blockchainHash,
+        decisionCheckpoints: override.decisionCheckpoints ?? decisionCheckpoints,
+        nodePositions: override.nodePositions ?? nodePositions,
       });
       setChats((prev) => {
         const idx = prev.findIndex((c) => c.id === packed.id);
@@ -143,7 +156,7 @@ function App() {
         return next;
       });
     },
-    [conversationId, messages, sessionMode, blockchainHash, persistWorkspace]
+    [conversationId, messages, sessionMode, blockchainHash, decisionCheckpoints, nodePositions, persistWorkspace]
   );
 
   useEffect(() => {
@@ -152,7 +165,7 @@ function App() {
       return;
     }
     if (!isPremium) syncChatsWithActive();
-  }, [messages, sessionMode, conversationId, blockchainHash, isPremium, syncChatsWithActive]);
+  }, [messages, sessionMode, conversationId, blockchainHash, decisionCheckpoints, nodePositions, isPremium, syncChatsWithActive]);
 
   const syncUsage = useCallback(async () => {
     try {
@@ -202,6 +215,9 @@ function App() {
       setMessages(chat.messages || []);
       setSessionMode(chat.sessionMode || 'chat');
       setBlockchainHash(chat.blockchainHash || null);
+      setDecisionCheckpoints(chat.decisionCheckpoints || []);
+      setNodePositions(chat.nodePositions || {});
+      setActiveCheckpointId(null);
       persistWorkspace(chats, chat.id);
     },
     [chats, persistWorkspace]
@@ -230,9 +246,51 @@ function App() {
       charCount: data.char_count,
       consumesAuditCredit: billable,
       mefScore: data.mef_score,
+      guideGraph: data.guide_graph,
+      guidePhase: data.guide_phase,
+      guideCompleteness: data.guide_completeness,
       ...extra,
     };
   };
+
+  const registerAuditCheckpoint = useCallback(
+    (fullMessages, botMsg, modeHint) => {
+      if (!shouldCreateCheckpoint(botMsg)) return botMsg;
+      const idx = fullMessages.length - 1;
+      let latestCp = null;
+      setDecisionCheckpoints((prev) => {
+        const cps = appendCheckpoint(prev, fullMessages, idx, botMsg, modeHint || sessionMode);
+        latestCp = cps[cps.length - 1];
+        return cps.map(trimCheckpointForStorage);
+      });
+      if (latestCp) setActiveCheckpointId(latestCp.id);
+      return latestCp ? { ...botMsg, checkpointId: latestCp.id } : botMsg;
+    },
+    [sessionMode]
+  );
+
+  const restoreToCheckpoint = useCallback(
+    (cp) => {
+      if (!cp || cp.messageIndex == null) return;
+      const trimmed = messages.slice(0, cp.messageIndex + 1);
+      setMessages(trimmed);
+      setSessionMode(cp.sessionMode || 'audit');
+      setDecisionCheckpoints((prev) =>
+        pruneCheckpointsAfter(prev, cp.messageIndex).map(trimCheckpointForStorage)
+      );
+      setActiveCheckpointId(cp.id);
+      syncChatsWithActive({
+        messages: trimmed,
+        sessionMode: cp.sessionMode || 'audit',
+        decisionCheckpoints: pruneCheckpointsAfter(decisionCheckpoints, cp.messageIndex),
+      });
+    },
+    [messages, decisionCheckpoints, syncChatsWithActive]
+  );
+
+  const handleNodePositionChange = useCallback((cpId, pos) => {
+    setNodePositions((prev) => ({ ...prev, [cpId]: pos }));
+  }, []);
 
   const performFullReset = useCallback(async () => {
     try {
@@ -252,6 +310,9 @@ function App() {
     setMessages([]);
     setSessionMode('chat');
     setBlockchainHash(null);
+    setDecisionCheckpoints([]);
+    setNodePositions({});
+    setActiveCheckpointId(null);
     setActiveView('chat');
     setGateModal({ open: false, mode: 'limit' });
     syncUsage();
@@ -276,7 +337,14 @@ function App() {
   const requestNewChat = () => {
     if (blockIfFreemium()) return;
 
-    const packed = packActiveChat({ conversationId, messages, sessionMode, blockchainHash });
+    const packed = packActiveChat({
+      conversationId,
+      messages,
+      sessionMode,
+      blockchainHash,
+      decisionCheckpoints,
+      nodePositions,
+    });
     let nextChats = chats.map((c) => (c.id === conversationId ? packed : c));
     if (!nextChats.some((c) => c.id === conversationId) && messages.length > 0) {
       nextChats = [packed, ...nextChats];
@@ -303,7 +371,14 @@ function App() {
     if (chatId === conversationId) return;
     if (blockIfFreemium()) return;
 
-    const packed = packActiveChat({ conversationId, messages, sessionMode, blockchainHash });
+    const packed = packActiveChat({
+      conversationId,
+      messages,
+      sessionMode,
+      blockchainHash,
+      decisionCheckpoints,
+      nodePositions,
+    });
     let nextChats = chats.map((c) => (c.id === conversationId ? packed : c));
     if (!nextChats.find((c) => c.id === conversationId) && messages.length > 0) {
       nextChats = [packed, ...nextChats].slice(0, FREE_CHAT_SLOTS);
@@ -339,7 +414,9 @@ function App() {
 
     try {
       const { data } = await postChatMessage(payload, apiHeaders());
-      setMessages([...newMessages, applyBotPayload(data)]);
+      const botRaw = applyBotPayload(data);
+      const bot = registerAuditCheckpoint([...newMessages, botRaw], botRaw, data.input_mode);
+      setMessages([...newMessages, bot]);
     } catch (error) {
       if (error.response?.status === 402) handleFreemiumError(error, newMessages);
       else {
@@ -395,7 +472,10 @@ function App() {
         isDocAck: true,
       };
 
-      setMessages([...newMessages, docAck, applyBotPayload(response.data, { filename: file.name, isAudit: true })]);
+      const botRaw = applyBotPayload(response.data, { filename: file.name, isAudit: true });
+      const withAck = [...newMessages, docAck, botRaw];
+      const bot = registerAuditCheckpoint(withAck, botRaw, 'audit');
+      setMessages([...newMessages, docAck, bot]);
     } catch (error) {
       if (error.response?.status === 402) handleFreemiumError(error, newMessages);
       else {
@@ -431,7 +511,9 @@ function App() {
         },
         apiHeaders()
       );
-      setMessages([...newMessages, applyBotPayload(response.data, { isRefinement: true })]);
+      const botRaw = applyBotPayload(response.data, { isRefinement: true });
+      const bot = registerAuditCheckpoint([...newMessages, botRaw], botRaw, 'plan');
+      setMessages([...newMessages, bot]);
       setSessionMode('plan');
     } catch (error) {
       if (error.response?.status === 402) handleFreemiumError(error, newMessages);
@@ -521,6 +603,11 @@ function App() {
             }}
             onRequestResetMemory={() => setGateModal({ open: true, mode: 'reset' })}
             apiHeaders={apiHeaders}
+            decisionCheckpoints={decisionCheckpoints}
+            nodePositions={nodePositions}
+            activeCheckpointId={activeCheckpointId}
+            onRestoreCheckpoint={restoreToCheckpoint}
+            onNodePositionChange={handleNodePositionChange}
           />
         )}
       </ErrorBoundary>

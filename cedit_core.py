@@ -19,6 +19,14 @@ from langchain_pinecone import PineconeVectorStore
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 
+from guide_engine import (
+    assess_guide_state,
+    build_graph_visualization,
+    format_guide_progress,
+    guide_phase_instruction,
+    risk_level_from_index,
+)
+
 load_dotenv()
 
 FREE_LIMIT = int(os.getenv("CEDIT_FREE_LIMIT", "10"))
@@ -259,8 +267,17 @@ def detect_response_mode(content: str, is_audit: bool = False) -> str:
     return "chat"
 
 
-def should_offer_pdf(content: str, is_audit: bool = False) -> bool:
+def should_offer_pdf(
+    content: str,
+    is_audit: bool = False,
+    *,
+    guide_state: Optional[Any] = None,
+) -> bool:
     mode = detect_response_mode(content, is_audit=is_audit)
+    if mode not in ("audit", "plan"):
+        return False
+    if guide_state is not None:
+        return guide_state.pdf_ready
     return mode in ("audit", "plan")
 
 
@@ -302,6 +319,9 @@ def _parse_score_json(raw: str) -> Dict[str, Any]:
         "approval_index": 0,
         "document_only_index": 0,
         "estimated_with_official_plan": 0,
+        "risk_index": 50,
+        "risk_level": "MEDIO",
+        "worst_case_scenarios": [],
         "strengths": [],
         "missing_points": [],
         "recommendations": [],
@@ -317,14 +337,16 @@ def _parse_score_json(raw: str) -> Dict[str, Any]:
         for k in default:
             if k in data:
                 default[k] = data[k]
-        for field in ("approval_index", "document_only_index", "estimated_with_official_plan"):
+        for field in ("approval_index", "document_only_index", "estimated_with_official_plan", "risk_index"):
             try:
                 default[field] = max(0, min(100, int(float(default[field]))))
             except (TypeError, ValueError):
-                default[field] = 0
-        for field in ("strengths", "missing_points", "recommendations"):
+                default[field] = 0 if field != "risk_index" else 50
+        for field in ("strengths", "missing_points", "recommendations", "worst_case_scenarios"):
             if not isinstance(default[field], list):
                 default[field] = [str(default[field])] if default[field] else []
+        if isinstance(default.get("risk_level"), str):
+            default["risk_level"] = default["risk_level"].strip().upper()
         return default
     except json.JSONDecodeError:
         return default
@@ -346,11 +368,15 @@ Analiza el documento "{filename}" y responde ÚNICAMENTE con un JSON válido (si
   "approval_index": <entero 0-100, calidad actual global del material>,
   "document_only_index": <entero 0-100, si solo se presentara este borrador al MEF>,
   "estimated_with_official_plan": <entero 0-100, probabilidad si genera plan técnico oficial CEDIT de ~10 págs>,
+  "risk_index": <entero 0-100, MAYOR = más riesgo de rechazo u observación grave ante MEF>,
+  "risk_level": <"BAJO"|"MEDIO"|"ALTO"|"CRÍTICO">,
+  "worst_case_scenarios": ["peor escenario plausible 1", "..."],
   "strengths": ["punto fuerte 1", "..."],
   "missing_points": ["brecha 1", "..."],
   "recommendations": ["qué debería aportar el usuario 1", "..."],
   "summary": "frase breve"
 }}
+Evalúa también riesgos técnicos, normativos, financieros, institucionales y temporales. Sé realista (enfoque fatalista responsable).
 Criterios: identificación, problema, solución, presupuesto, cronograma, beneficiarios, riesgos, marco normativo, coherencia SNIP/componente.
 Contexto normativo:
 {normative_ctx[:3000]}
@@ -364,6 +390,8 @@ DOCUMENTO:
     ]
     raw = llm.invoke(messages).content
     parsed = _parse_score_json(raw)
+    if not parsed.get("risk_level"):
+        parsed["risk_level"] = risk_level_from_index(int(parsed.get("risk_index", 50)))
     parsed["meets_expediente_threshold"] = parsed["estimated_with_official_plan"] >= MEF_APPROVAL_THRESHOLD
     return parsed
 
@@ -372,15 +400,21 @@ def format_mef_score_markdown(score: Dict[str, Any]) -> str:
     """Bloque markdown para mostrar en chat tras subir documento."""
     doc_i = score.get("document_only_index", 0)
     est_i = score.get("estimated_with_official_plan", 0)
+    risk_i = score.get("risk_index", 50)
+    risk_lvl = score.get("risk_level", "MEDIO")
     lines = [
         "\n\n## Índice de aprobación MEF (estimado por CEDIT)\n",
         f"- **Con su documento actual:** aprox. **{doc_i}%** de alineación con parámetros MEF/Invierte.pe.",
         f"- **Si genera el Plan Técnico Oficial (PDF) con CEDIT:** estimación **{est_i}%**.",
+        f"- **Índice de riesgo (rechazo/observación grave):** **{risk_i}%** — nivel **{risk_lvl}**.",
     ]
     if score.get("meets_expediente_threshold"):
         lines.append(f"- ✅ Supera el umbral de **{MEF_APPROVAL_THRESHOLD}%** para figurar en **Mis expedientes** tras generar el PDF.")
     else:
         lines.append(f"- Para **Mis expedientes** se requiere **≥{MEF_APPROVAL_THRESHOLD}%** tras el plan oficial.")
+    if score.get("worst_case_scenarios"):
+        lines.append("\n### Peores escenarios plausibles\n")
+        lines.extend(f"- {s}" for s in score["worst_case_scenarios"][:4])
     if score.get("strengths"):
         lines.append("\n### Fortalezas de su documento\n")
         lines.extend(f"- {s}" for s in score["strengths"][:6])
@@ -399,12 +433,12 @@ def append_followup_questions(content: str, gaps: List[str]) -> str:
     if not gaps or "## para alimentar" in content.lower():
         return content
     lines = ["\n\n## Para alimentar su plan técnico (PDF)\n"]
-    prompts = [
-        f"¿Podría contarme más sobre el **{g}** de su proyecto?",
-        f"¿Qué detalle tiene del **{g}** para incorporarlo al expediente MEF?",
+    templates = [
+        "¿Podría contarme más sobre el **{}** de su proyecto?",
+        "¿Qué detalle tiene del **{}** para incorporarlo al expediente MEF?",
     ]
-    for i, g in enumerate(gaps):
-        lines.append(f"- {prompts[i % 2]}")
+    for i, gap in enumerate(gaps):
+        lines.append(f"- {templates[i % 2].format(gap)}")
     lines.append(
         "\n*Sus respuestas enriquecerán el **Plan Técnico Oficial (PDF)** de ~9-10 páginas.*"
     )
@@ -479,9 +513,26 @@ vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=e
 llm = ChatGroq(temperature=0.2, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
 
 
+def _escape_langchain_system_template(text: str, allowed_vars: Optional[Tuple[str, ...]] = ("context",)) -> str:
+    """Los .md del agent_mind usan llaves (Mermaid/JSON); LangChain las interpreta como variables."""
+    escaped = text.replace("{", "{{").replace("}", "}}")
+    for var in allowed_vars or ():
+        escaped = escaped.replace(f"{{{{{var}}}}}", f"{{{var}}}")
+    return escaped
+
+
 def load_cognitive_architecture() -> str:
     mind_dir = os.path.join(os.path.dirname(__file__), "agent_mind")
-    files = ["master.md", "soul.md", "instinct.md", "vision.md", "plan.md"]
+    files = [
+        "master.md",
+        "soul.md",
+        "soul_extended.md",
+        "instinct.md",
+        "vision.md",
+        "plan.md",
+        "decision_graph.md",
+        "decision_graph_extended.md",
+    ]
     prompt_parts = []
     for f in files:
         path = os.path.join(mind_dir, f)
@@ -489,7 +540,8 @@ def load_cognitive_architecture() -> str:
             with open(path, "r", encoding="utf-8") as file:
                 prompt_parts.append(file.read())
     base = "\n\n".join(prompt_parts)
-    return base + "\n\nContexto normativo encontrado:\n{context}"
+    raw = base + "\n\nContexto normativo encontrado:\n{context}"
+    return _escape_langchain_system_template(raw)
 
 
 SYSTEM_PROMPT_TEXT = load_cognitive_architecture()
@@ -501,9 +553,22 @@ prompt = ChatPromptTemplate.from_messages([
 ])
 
 CEDIT_IDENTITY_FIRST_TURN_ES = """
-IDENTIDAD — Primera respuesta (o saludo / ¿quién eres?):
-- Preséntate UNA sola vez en **español**: "Soy **CEDIT**, su Consejero Estatal Digital. Mi función es **guiar al ciudadano** en trámites y derechos del Estado, y **ayudar a servidores públicos** a formular **planes de inversión viables y rentables** ante el **MEF** e **Invierte.pe**."
-- Luego responde al fondo de la consulta en español.
+IDENTIDAD — Primer turno (NO te presentes a menos que te pregunten quién eres):
+- NO digas "Soy CEDIT" ni te presentes si el usuario solo saluda ("hola", "cómo estás", "buenas").
+- En el primer turno responde de forma NATURAL, amable y breve. Ejemplo:
+  "¡Hola! ¿En qué puedo ayudarle hoy? Si tiene alguna duda sobre un trámite o proceso del Estado, o si necesita orientación para un proyecto, estoy aquí para guiarle."
+- SÉ BREVE: 2-3 oraciones máximo si es un saludo.
+- Si el usuario plantea una consulta concreta, responde directamente con contenido útil.
+- NUNCA generes listas de "aspectos a considerar".
+- NO menciones "inversión pública" ni "MEF" a menos que el usuario lo mencione primero.
+- Tu tono: cálido, cercano, profesional. Como un funcionario amable que quiere ayudar.
+"""
+
+CEDIT_IDENTITY_WHOAMI_ES = """
+IDENTIDAD — Te preguntaron quién eres. Responde:
+"Soy CEDIT, su Consejero Estatal Digital. Puedo resolver sus dudas como ciudadano sobre trámites y procesos del Estado, o guiarle como servidor público a consolidar un plan de inversión sostenible ante el MEF."
+- Luego pregunta brevemente en qué puedes ayudar.
+- SÉ BREVE: máximo 3 oraciones.
 """
 
 CEDIT_IDENTITY_FIRST_TURN_QU = """
@@ -582,8 +647,15 @@ def cedit_identity_instruction(
     locale: str = "es",
 ) -> str:
     key = _normalize_locale(locale)
-    first = not _history_has_assistant_turn(history) or _user_asks_who_are_you(message)
-    block = CEDIT_IDENTITY_FIRST_BY_LOCALE.get(key, CEDIT_IDENTITY_FIRST_TURN_ES) if first else CEDIT_IDENTITY_ONGOING
+    asks_who = _user_asks_who_are_you(message)
+    first = not _history_has_assistant_turn(history)
+
+    if asks_who:
+        block = CEDIT_IDENTITY_WHOAMI_ES
+    elif first:
+        block = CEDIT_IDENTITY_FIRST_BY_LOCALE.get(key, CEDIT_IDENTITY_FIRST_TURN_ES)
+    else:
+        block = CEDIT_IDENTITY_ONGOING
     return block + "\n" + locale_instruction(key)
 
 
@@ -591,7 +663,7 @@ REJECTION_OUT_OF_SCOPE = {
     "technical": {
         "es": (
             "Con gusto le atiendo en lo que es mi especialidad.\n\n"
-            "Soy **CEDIT**, su Consejero Estatal Digital del Perú. Puedo **guiarle en trámites y derechos "
+            "Soy CEDIT, su Consejero Estatal Digital del Perú. Puedo **guiarle en trámites y derechos "
             "ciudadanos**, aclarar **normativa** (**MEF**, **Invierte.pe**, **OSCE**) y apoyar **planes de "
             "inversión pública** conforme a la ley.\n\n"
             "Sobre programación, depuración de código o errores técnicos de software, **no puedo ayudarle**; "
@@ -753,26 +825,27 @@ PDF_OUTPUT_LOCALE_NOTE = {
 MEF_APPROVAL_THRESHOLD = 80
 
 AUDIT_STRUCTURE_INSTRUCTION = """
-IMPORTANTE — Respuesta de CHAT para auditorías (NO es el PDF oficial). Orden exacto:
+▓▓▓ MODO CEDIT: GUÍA / LÍDER / MENTOR — NO ASISTENTE PASIVO ▓▓▓
 
-ATENCIÓN SEGURIDAD PÚBLICA Y ÉTICA: Si el proyecto contiene elementos ilegales o fraudulentos, rechaza de inmediato sin usar esta estructura.
+MÁXIMA PRIORIDAD: La estructura y longitud de tu respuesta la define [FASE GRAFO] más arriba.
+Si la fase es DESCUBRIR, DIAGNOSTICAR o RECOPILAR → OBEDECE sus restricciones de formato SIN EXCEPCIÓN.
 
-Si el plan es legal y legítimo:
+PROHIBICIONES ABSOLUTAS EN FASES TEMPRANAS (0-2):
+• NO hagas listas de "aspectos a considerar" (el usuario no las pidió).
+• NO hagas más de 2 preguntas por mensaje. JAMÁS.
+• NO escribas más de 4 párrafos.
+• NO preguntes cosas que TÚ podrías investigar con el contexto normativo que tienes.
+• NO termines con "¿Te gustaría profundizar en alguno...?" — TÚ DECIDES la dirección.
 
-## Mi opinión como CEDIT
-(Preséntate brevemente como **CEDIT** si aún no lo hiciste. Empatía, 2-3 párrafos cortos. Resume qué proyecto detectaste: nombre, entidad, monto aproximado, plazo, ubicación.)
+COMPORTAMIENTO DE LÍDER:
+• Ofrece PERSPECTIVA: compara con proyectos similares, menciona riesgos tempranos, sugiere opciones.
+• Haz preguntas CERRADAS o de opción: "¿Lo ejecutaría municipalidad o GORE?" no "¿Cuáles son tus objetivos?"
+• Si el usuario da una idea vaga, INTERPRETA lo que probablemente necesita y valida: "Suena a un PIP de educación componente 1. ¿Correcto?"
+• GUÍA = tú propones dirección; el usuario solo confirma o corrige.
 
-## Puntos fuertes
-(Viñetas con lo bien formulado. Cita datos concretos del documento del usuario.)
-
-## Dictamen técnico de auditoría
-(Dictamen formal MEF/Invierte.pe: viabilidad, brechas normativas, recomendaciones. Viñetas y **negritas**.)
-
-RECOLECCIÓN DE DATOS: Antes del dictamen, identifica y menciona explícitamente todo dato del expediente: denominación del proyecto, código SNIP/CUI si aparece, entidad ejecutora, ubigeo, costo total, fuente de financiamiento, plazo de ejecución, componente Invierte.pe, objetivos y productos. Si falta información crítica, indícalo en el dictamen como brecha.
-
-Si faltan datos para un PDF sólido (~10 páginas), añade al final un bloque:
-## Para alimentar su plan técnico (PDF)
-Con 2-4 preguntas MUY específicas según lo que falte (presupuesto, plazo, ubigeo, beneficiarios, fuente de financiamiento, etc.). Ejemplo: "¿Cuál es el presupuesto total en soles y el desglose por componente?"
+SEGURIDAD: Si es ilegal o fraudulento, rechaza sin usar esta estructura.
+NO inventes cifras. PDF solo en CONSOLIDAR o completitud ≥70%.
+RECOLECCIÓN en fases avanzadas: extrae datos del expediente (denominación, SNIP/CUI, entidad, ubigeo, costo, plazo, componente, beneficiarios).
 """
 
 AUDIT_PDF_GATHERING_INSTRUCTION = """
@@ -1016,16 +1089,28 @@ def run_chat(
     docs = vectorstore.similarity_search(message, k=3)
     contexto = "\n\n".join([d.page_content for d in docs])
 
-    extra = "\n\n" + cedit_identity_instruction(history, message, locale)
-    if mode == "audit":
-        extra += "\n" + AUDIT_PDF_GATHERING_INSTRUCTION + "\n" + AUDIT_STRUCTURE_INSTRUCTION
-    elif mode == "plan":
-        extra += "\n" + AUDIT_STRUCTURE_INSTRUCTION
+    prefix_instructions = cedit_identity_instruction(history, message, locale)
+    guide_state = None
+    if mode in ("audit", "plan"):
+        guide_state = assess_guide_state(message, history, has_pdf=False)
+        prefix_instructions += "\n\n[FASE GRAFO — OBEDECE ESTAS RESTRICCIONES]\n" + guide_phase_instruction(guide_state)
+        prefix_instructions += "\n" + format_guide_progress(guide_state) + "\n"
+        if mode == "audit":
+            prefix_instructions += "\n" + AUDIT_PDF_GATHERING_INSTRUCTION + "\n" + AUDIT_STRUCTURE_INSTRUCTION
+        else:
+            prefix_instructions += "\n" + AUDIT_STRUCTURE_INSTRUCTION
+
+    formatted_input = (
+        f"[INSTRUCCIONES OPERATIVAS — aplícalas a la respuesta que generes]\n"
+        f"{prefix_instructions}\n"
+        f"[FIN INSTRUCCIONES]\n\n"
+        f"[MENSAJE DEL USUARIO]\n{message}\n[Canal: {canal}]"
+    )
 
     messages = prompt.format_messages(
         context=contexto,
         chat_history=_format_history(history),
-        input=message + extra + f"\n\n[Canal: {canal}]",
+        input=formatted_input,
     )
     respuesta = llm.invoke(messages)
     content = respuesta.content
@@ -1041,11 +1126,14 @@ def run_chat(
         "input_mode": mode,
         "consumes_audit_credit": billable,
         "usage": usage,
-        "show_pdf": should_offer_pdf(content, is_audit=(mode == "audit")),
+        "show_pdf": should_offer_pdf(content, is_audit=(mode == "audit"), guide_state=guide_state),
     }
-    if response_mode == "audit" or mode == "audit":
+    if response_mode == "audit" or mode in ("audit", "plan"):
+        if guide_state is None:
+            guide_state = assess_guide_state(message, history, has_pdf=False)
         gaps = detect_project_data_gaps(content, history)
-        content = append_followup_questions(content, gaps)
+        if guide_state.phase.value < 3:
+            content = append_followup_questions(content, gaps)
         sections = parse_audit_sections(content)
         result["response"] = content
         result["opinion"] = sections.get("opinion", "")
@@ -1054,6 +1142,14 @@ def run_chat(
         result["display"] = sections.get("display", content)
         result["data_gaps"] = gaps
         result["needs_more_info"] = bool(gaps)
+        result["guide_phase"] = guide_state.phase_name
+        result["guide_completeness"] = guide_state.completeness_pct
+        result["guide_graph"] = build_graph_visualization(guide_state)
+        result["guide_state"] = guide_state.to_dict()
+        combined = _combined_audit_text(message + "\n" + content, history)
+        if guide_state.phase.value >= 2 or len(combined) > 200:
+            mef_score = score_document_against_mef(combined, "conversacion.txt", normative_ctx=contexto)
+            result["mef_score"] = mef_score
     return result
 
 
@@ -1089,15 +1185,18 @@ def run_audit_pdf(
         user_text or "auditoría plan inversión pública MEF Invierte.pe",
     ]
     contexto = _gather_normative_context([q for q in rag_queries if q], k=3)
+    guide_state = assess_guide_state(text, history, has_pdf=True)
 
     user_note = f"\nComentario del usuario: {user_text}" if user_text.strip() else ""
     pregunta = (
-        f"Realiza una auditoría completa del siguiente expediente/plan de proyecto.\n\n"
+        f"Realiza una auditoría guiada (mentor MEF) del siguiente expediente/plan de proyecto.\n\n"
         f"ARCHIVO: {filename}\n"
         f"PÁGINAS EXTRAÍDAS: texto completo hasta {len(text)} caracteres.\n\n"
         f"CONTENIDO DEL DOCUMENTO:\n{text[:PDF_CHAT_EXTRACT_LIMIT]}\n"
         f"{user_note}\n\n"
         f"{cedit_identity_instruction(history, user_text or filename, locale)}\n"
+        f"[FASE GRAFO]\n{guide_phase_instruction(guide_state)}\n"
+        f"{format_guide_progress(guide_state)}\n"
         f"{AUDIT_PDF_GATHERING_INSTRUCTION}\n"
         f"{AUDIT_STRUCTURE_INSTRUCTION}"
     )
@@ -1112,8 +1211,9 @@ def run_audit_pdf(
     respuesta = llm.invoke(messages)
     content = respuesta.content
     content += format_mef_score_markdown(mef_score)
-    gaps = detect_project_data_gaps(text, [])
-    content = append_followup_questions(content, gaps)
+    gaps = detect_project_data_gaps(text, history)
+    if guide_state.phase.value < 3:
+        content = append_followup_questions(content, gaps)
     sections = parse_audit_sections(content)
     usage = get_usage(scope)
     if not skip_usage:
@@ -1130,13 +1230,17 @@ def run_audit_pdf(
         "input_mode": "audit",
         "consumes_audit_credit": True,
         "usage": usage,
-        "show_pdf": True,
+        "show_pdf": guide_state.pdf_ready,
         "source_excerpt": text[:PDF_AUDIT_TEXT_LIMIT],
         "page_count": page_count,
         "char_count": char_count,
         "data_gaps": gaps,
         "needs_more_info": bool(gaps),
         "mef_score": mef_score,
+        "guide_phase": guide_state.phase_name,
+        "guide_completeness": guide_state.completeness_pct,
+        "guide_graph": build_graph_visualization(guide_state),
+        "guide_state": guide_state.to_dict(),
         "blockchain_payload": f"[REGISTRO BLOCKCHAIN] Auditoría: {filename} | user={user_id} | canal={canal}",
     }
 

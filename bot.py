@@ -32,6 +32,7 @@ from discord_session import get_session, activate_pro_user, get_pro_settings
 from discord_ui import (
     welcome_embed,
     audit_bar_embed,
+    guide_graph_embed,
     response_embed,
     freemium_blocked_embed,
     pro_welcome_embed,
@@ -114,6 +115,9 @@ async def send_bot_response(
     if mode in ("audit", "plan"):
         bar = audit_bar_embed(usage, mode, requested_by=user)
         await _channel_send(target, embed=bar, view=MainMenuView())
+        if result.get("guide_graph"):
+            trail = guide_graph_embed(result["guide_graph"], requested_by=user)
+            await _channel_send(target, embed=trail)
 
 
 async def _apply_discord_profile():

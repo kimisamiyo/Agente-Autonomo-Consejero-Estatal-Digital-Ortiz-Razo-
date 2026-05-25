@@ -3,6 +3,9 @@ import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 import ToolsDropdown from './ToolsDropdown';
 import MefScoreCard from './MefScoreCard';
+import GuideGraphTrail from './GuideGraphTrail';
+import AuditDecisionNetwork from './AuditDecisionNetwork';
+import { isAuditSession } from '../utils/auditDecisionPoints';
 import PdfLanguageModal from './PdfLanguageModal';
 import { saveExpediente } from '../utils/expedientesStore';
 import { useI18n } from '../i18n/I18nContext';
@@ -58,6 +61,11 @@ const ChatInterface = ({
   onRequestResetMemory,
   apiHeaders,
   uiLocale = 'es',
+  decisionCheckpoints = [],
+  nodePositions = {},
+  activeCheckpointId = null,
+  onRestoreCheckpoint,
+  onNodePositionChange,
 }) => {
   const { t } = useI18n();
 
@@ -105,6 +113,23 @@ const ChatInterface = ({
     sessionMode === 'audit' ||
     sessionMode === 'plan' ||
     messages.some((m) => m.consumesAuditCredit || m.isAudit || m.showPdf);
+
+  const showDecisionNetwork =
+    isAuditSession(sessionMode, messages) && decisionCheckpoints.length > 0;
+
+  const checkpointByMessageIndex = useMemo(() => {
+    const map = {};
+    decisionCheckpoints.forEach((cp) => {
+      map[cp.messageIndex] = cp;
+    });
+    return map;
+  }, [decisionCheckpoints]);
+
+  const handleRestoreCheckpoint = (cp) => {
+    if (!cp || !onRestoreCheckpoint) return;
+    if (typeof window !== 'undefined' && !window.confirm(t('decision.confirmRestore'))) return;
+    onRestoreCheckpoint(cp);
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -342,6 +367,20 @@ const ChatInterface = ({
         </div>
       )}
 
+      {showDecisionNetwork && (
+        <div className="shrink-0 w-full px-4 py-3 flex justify-center border-b border-indigo-200/60 bg-slate-50/80 z-10">
+          <div className="w-full max-w-[850px]">
+            <AuditDecisionNetwork
+              checkpoints={decisionCheckpoints}
+              positions={nodePositions}
+              activeCheckpointId={activeCheckpointId}
+              onRestore={handleRestoreCheckpoint}
+              onPositionChange={onNodePositionChange}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto w-full px-4 md:px-gutter py-6 flex justify-center">
         <div className="w-full max-w-[850px] flex flex-col gap-6">
           {messages.length === 0 ? (
@@ -431,6 +470,10 @@ const ChatInterface = ({
                             <ReactMarkdown>{msg.opinion}</ReactMarkdown>
                           </div>
                         </div>
+                      )}
+
+                      {msg.guideGraph && !msg.isDocAck && (msg.isAudit || msg.mode === 'audit' || msg.mode === 'plan') && (
+                        <GuideGraphTrail graph={msg.guideGraph} className="mb-4" />
                       )}
 
                       {msg.mefScore && !msg.isDocAck && (
@@ -548,8 +591,23 @@ const ChatInterface = ({
                       </div>
                     )}
 
-                    <div className="flex justify-between px-2 mt-1">
-                      <button type="button" className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1" onClick={() => navigator.clipboard.writeText(msg.fullContent || msg.content)}>
+                    <div className="flex justify-between flex-wrap gap-2 px-2 mt-1">
+                      {checkpointByMessageIndex[index] && onRestoreCheckpoint && (
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreCheckpoint(checkpointByMessageIndex[index])}
+                          className={`text-xs font-bold flex items-center gap-1 px-2.5 py-1 rounded-full border transition-colors ${
+                            activeCheckpointId === checkpointByMessageIndex[index].id
+                              ? 'bg-amber-100 border-amber-400 text-amber-900'
+                              : 'bg-indigo-50 border-indigo-200 text-indigo-900 hover:bg-amber-50 hover:border-amber-300'
+                          }`}
+                          title={t('decision.restoreHint')}
+                        >
+                          <span className="material-symbols-outlined text-[16px]">history</span>
+                          {t('decision.restoreShort')}
+                        </button>
+                      )}
+                      <button type="button" className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 ml-auto" onClick={() => navigator.clipboard.writeText(msg.fullContent || msg.content)}>
                         <span className="material-symbols-outlined text-[16px]">content_copy</span> {t('chat.copy')}
                       </button>
                     </div>
