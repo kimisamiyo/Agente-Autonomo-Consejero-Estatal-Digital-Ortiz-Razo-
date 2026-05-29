@@ -230,6 +230,227 @@ _SECTOR_MAP = {
 }
 
 
+# Entidades que el mentor puede "consultar" (mensaje de estado en UI)
+MONITORING_ENTITIES: List[Tuple[str, str]] = [
+    ("SUNEDU", r"sunedu|superintendencia.{0,20}educaci"),
+    ("MEF", r"\bmef\b|ministerio de econom"),
+    ("PRONIED", r"pronied|infraestructura educativa"),
+    ("Invierte.pe", r"invierte\.pe|\bsnip\b|\bcui\b"),
+    ("OSCE", r"\bosce\b|supervisi[oó]n de contrataciones"),
+    ("FONIPREL", r"foniprel"),
+    ("PROCOMPITE", r"procompite"),
+    ("ProInversión", r"proinversi[oó]n|obras por impuestos|\boxi\b"),
+    ("MIDAGRI", r"midagri|desarrollo agrario"),
+    ("Contraloría", r"contralor[ií]a"),
+]
+
+
+def detect_monitoring_entities(
+    text: str,
+    history: Optional[List[Dict]] = None,
+) -> List[str]:
+    """Organismos citados en el hilo — para mensajes tipo 'buscando sobre SUNEDU'."""
+    blob = _combined_text(text, history)
+    found: List[str] = []
+    for label, pattern in MONITORING_ENTITIES:
+        if re.search(pattern, blob, re.I):
+            found.append(label)
+    return list(dict.fromkeys(found))
+
+
+# Cargos / autoridades (Perú) — nombre propio opcional
+_PUBLIC_FIGURE_PATTERNS: List[Tuple[str, str]] = [
+    (
+        "Gobernador regional",
+        r"gobernador(?:a)?\s+regional\s+(?:de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+(?:de\s+)?[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,3})",
+    ),
+    (
+        "Gobernador regional",
+        r"gobernador(?:a)?\s+regional\b",
+    ),
+    (
+        "Gobernador regional",
+        r"gobernador(?:a)?\s+regional\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)",
+    ),
+    (
+        "Alcalde provincial",
+        r"alcalde(?:sa)?\s+provincial(?:\s+de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)",
+    ),
+    (
+        "Alcalde distrital",
+        r"alcalde(?:sa)?\s+distrital(?:\s+de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)",
+    ),
+    (
+        "Alcalde",
+        r"alcalde(?:sa)?\s+(?:de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)",
+    ),
+    (
+        "Prefecto",
+        r"prefecto(?:a)?\s+(?:de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,3})",
+    ),
+    (
+        "Regidor",
+        r"regidor(?:a)?\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+    ),
+    (
+        "Ministro",
+        r"ministro(?:a)?\s+de\s+([\wáéíóúñ]{3,30})",
+    ),
+    (
+        "Vicegobernador",
+        r"vicegobernador(?:a)?\s+(?:de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,3})",
+    ),
+    (
+        "Gerente regional",
+        r"gerente\s+regional\s+(?:de\s+)?([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,2})",
+    ),
+    (
+        "Servidor público",
+        r"servidor(?:a)?\s+p[uú]blico(?:a)?\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){0,3})",
+    ),
+    (
+        "Autoridad",
+        r"(?:el|la)\s+(gobernador(?:a)?|alcalde(?:sa)?|prefecto(?:a)?)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})",
+    ),
+]
+
+
+_NAME_STOP_WORDS = frozenset({
+    "de", "la", "el", "los", "las", "del", "y", "en", "con", "para", "por",
+    "regional", "provincial", "distrital", "apoya", "apoyo", "mencionado", "mencion",
+    "proyecto", "dijo", "indico", "indicó", "solicito", "solicitó", "quiere",
+    "necesita", "debe", "sera", "será", "este", "esta", "esta", "nuestro", "nuestra",
+})
+
+
+def _clean_figure_name(raw: str) -> str:
+    """Recorta nombres que capturaron verbos o ruido del enunciado."""
+    words = raw.split()
+    kept: List[str] = []
+    for w in words:
+        if w.lower() in _NAME_STOP_WORDS:
+            break
+        if len(kept) >= 3:
+            break
+        kept.append(w)
+    return " ".join(kept).title() if kept else ""
+
+
+def detect_public_figures(
+    text: str,
+    history: Optional[List[Dict]] = None,
+) -> List[Dict[str, str]]:
+    """Autoridades o servidores mencionados — para riesgo institucional y mensaje de estado."""
+    blob = _combined_text(text, history)
+    figures: List[Dict[str, str]] = []
+    seen: set = set()
+
+    for role, pattern in _PUBLIC_FIGURE_PATTERNS:
+        for m in re.finditer(pattern, blob, re.I):
+            groups = [g.strip() for g in m.groups() if g and str(g).strip()]
+            name = ""
+            if role == "Autoridad" and len(groups) >= 2:
+                role = groups[0].capitalize()
+                name = _clean_figure_name(groups[1])
+            elif groups:
+                name = _clean_figure_name(groups[-1])
+                if len(name) < 3:
+                    name = ""
+            label = f"{role} {name}".strip() if name else role
+            key = label.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            figures.append({"role": role, "name": name, "label": label})
+
+    figures.sort(key=lambda x: len(x["label"]), reverse=True)
+    deduped: List[Dict[str, str]] = []
+    for f in figures:
+        low = f["label"].lower()
+        if any(
+            f["label"] != o["label"] and low in o["label"].lower()
+            for o in deduped
+        ):
+            continue
+        deduped.append(f)
+    return deduped[:3]
+
+
+def build_research_context_hint(
+    text: str,
+    history: Optional[List[Dict]] = None,
+) -> str:
+    """Instrucción LLM: investigar organismos/autoridades con obras, precedentes y preferencias."""
+    entities = detect_monitoring_entities(text, history)
+    figures = detect_public_figures(text, history)
+    sectors = detect_sector(text, history)
+    if not entities and not figures and sectors == ["general"]:
+        blob = _combined_text(text, history)
+        if not re.search(r"proyecto|obra|inversi|pip|mef|educaci|salud|vial", blob, re.I):
+            return ""
+
+    lines = [
+        "\n▓ INVESTIGACIÓN OBLIGATORIA DEL MENTOR (usa contexto normativo + RAG; no pidas al usuario) ▓",
+        "Antes de responder, contrasta en tu conocimiento y el contexto recuperado:",
+        "- **Obras y PIP similares** en el mismo sector y zona (qué se aprobó, qué observaron, plazos y montos referenciales).",
+        "- **Preferencias del organismo** (criterios, ventanillas, programas como FONIPREL/PRONIED/OxI si aplican).",
+        "- **Precedentes que funcionaron y los que fracasaron** (causa probable) para orientar la mejor ruta.",
+        "- **Recomendación concreta**: qué camino conviene más a ESTE caso (no un listado genérico).",
+        "- **Impacto y escenarios**: qué podría lograr su idea si sale bien; qué podría pasar si no (realista, sin alarmismo ni promesas vacías).",
+    ]
+    if entities:
+        lines.append(
+            f"- Organismo(s) citado(s): **{', '.join(entities[:4])}**. "
+            "Busca qué tipo de obras financia/supervisa, requisitos habituales y alertas típicas de observación."
+        )
+    if figures:
+        labels = ", ".join(f["label"] for f in figures[:3])
+        lines.append(
+            f"- Autoridad(es): **{labels}**. "
+            "Cartera y preferencias públicas de su gestión (obras priorizadas, alianzas GORE-Municipio), "
+            "riesgos de gobernanza; sin difamar ni inventar escándalos."
+        )
+    if sectors and sectors[0] != "general":
+        lines.append(
+            f"- Sector **{sectors[0]}**: comparar con 1-2 casos reales o patrones MEF en esa línea (selva, costa, sierra)."
+        )
+    lines.append(
+        "- Entrega al usuario la **mejor recomendación posible** con esa investigación; máximo 1 pregunta al final si falta un dato crítico."
+    )
+    return "\n".join(lines)
+
+
+# Alias histórico
+build_institutional_risk_hint = build_research_context_hint
+
+
+def build_mentor_activity_message(
+    text: str,
+    history: Optional[List[Dict]] = None,
+) -> str:
+    entities = detect_monitoring_entities(text, history)
+    figures = detect_public_figures(text, history)
+    sectors = detect_sector(text, history)
+    topics: List[str] = []
+
+    if entities:
+        topics.append(f"obras y criterios de **{entities[0]}**")
+    if sectors and sectors[0] != "general":
+        topics.append(f"proyectos **{sectors[0]}** similares")
+    elif entities:
+        topics.append("precedentes MEF en proyectos parecidos")
+    if figures:
+        topics.append(f"preferencias de **{figures[0]['label']}**")
+    if not topics:
+        return ""
+
+    if len(topics) == 1:
+        return f"Investigando {topics[0]} para recomendarle la mejor ruta…"
+    if len(topics) == 2:
+        return f"Investigando {topics[0]} y {topics[1]}…"
+    return f"Investigando {topics[0]}, {topics[1]} y {topics[2]}…"
+
+
 def detect_sector(text: str, history: Optional[List[Dict]] = None) -> List[str]:
     """Detecta sectores relevantes del proyecto a partir del texto."""
     blob = _combined_text(text, history)
@@ -587,12 +808,12 @@ def _mentor_message_for_phase(
     if pdf_ready:
         return "Mentor supremo: expediente listo para consolidar en PDF oficial MEF."
     if phase == CoachingPhase.DESCUBRIR:
-        return "Escuchando su idea. Aún no dictamino: primero entiendo su meta y su rol."
+        return "Acompañando su idea: le mostraré cómo puede tomar forma y qué conviene explorar."
     if phase == CoachingPhase.DIAGNOSTICAR:
-        return "Diagnosticando actor institucional y territorio del proyecto."
+        return "Afinando su proyecto: recomendaciones e impacto antes de la siguiente pregunta."
     if phase == CoachingPhase.RECOPILAR:
         focus = gaps[0] if gaps else "datos críticos"
-        return f"Recopilando expediente pieza a pieza. Prioridad ahora: {focus}."
+        return f"Su expediente madura ({focus}): recomendaciones primero, luego una pregunta concreta."
     if phase == CoachingPhase.EVALUAR_RIESGO:
         return "Analizando riesgos y peores escenarios (enfoque fatalista responsable)."
     if phase == CoachingPhase.ORIENTAR:
@@ -746,7 +967,11 @@ def risk_level_from_index(risk_index: int) -> str:
     return "BAJO"
 
 
-def guide_phase_instruction(state: GuideState) -> str:
+def guide_phase_instruction(
+    state: GuideState,
+    text: str = "",
+    history: Optional[List[Dict]] = None,
+) -> str:
     profile_hint = ""
     if state.profile.missing:
         profile_hint = (
@@ -764,6 +989,8 @@ def guide_phase_instruction(state: GuideState) -> str:
             + "\n".join(prog_lines)
         )
 
+    institutional_context = build_research_context_hint(text, history)
+
     base = f"""
 ═══════════════════════════════════════════════════════════════
 GRAFO SUPREMO CEDIT — Nodo: {state.current_node_id} | Fase: {state.phase_name}
@@ -771,84 +998,103 @@ Completitud expediente: {state.critical_present}/{state.critical_total} ({state.
 Perfil usuario: {state.profile.completeness_pct}%.
 Datos críticos faltantes: {", ".join(state.data_gaps) if state.data_gaps else "ninguno"}.
 Sectores detectados: {", ".join(state.detected_sectors)}.
-{profile_hint}{programs_context}
+{profile_hint}{programs_context}{institutional_context}
 ═══════════════════════════════════════════════════════════════
 
-▓▓▓ RESTRICCIONES ABSOLUTAS DEL MENTOR (violar = fallo) ▓▓▓
+▓▓▓ VOZ DE GUÍA TRANSPARENTE (orden sagrado del mensaje) ▓▓▓
 
-1. NUNCA hagas una lista de 3+ preguntas. MÁXIMO 1-2 preguntas CONCRETAS por turno.
-2. NUNCA hagas preguntas retóricas tipo "¿Te gustaría profundizar...?". TÚ decides qué explorar.
-3. NUNCA pidas al usuario info que debería INVESTIGAR EL AGENTE (marcos normativos, estado del sector, etc.).
-4. TÚ lideras: propón perspectiva, menciona casos similares, sugiere posibilidades.
-5. Si el usuario tiene una idea vaga, NO pidas un framework completo. Haz UNA pregunta y OFRECE dirección.
-6. Sé breve: máximo 3-4 párrafos cortos en fases 0-2.
-7. INVESTIGA: usa tu contexto normativo para dar información útil, no para pedir más.
-8. Ante ambigüedad, SUGIERE opciones en vez de preguntar abiertamente.
-   Malo: "¿Qué tipo de educación quieres?"
-   Bueno: "Para zona amazónica, veo dos caminos: IEST tecnológico o universidad intercultural. ¿Cuál se acerca más a lo que piensas?"
-9. Da PERSPECTIVA FATALISTA breve: "Ojo, el 70% de PIP educativos en selva fallan por X".
-10. NO inventes cifras. PDF solo si pdf_ready={state.pdf_ready}.
+SIEMPRE en este orden en ## Mi opinión… y secciones siguientes (las PREGUNTAS van AL FINAL):
+1) **Validar** lo que dijo (1 frase cálida, sin halago vacío).
+2) **Cómo va tomando forma su idea** — narrar la transformación: "Usted planteó X; con lo que sumó, esto ya parece un PIP de…; aún falta…".
+3) **Recomendaciones** — 2-3 viñetas accionables (programas, ruta MEF, aliado institucional) ANTES de preguntar.
+4) **Qué podría lograr / qué podría pasar** — impacto positivo realista + 1-2 escenarios adversos plausibles (apegado a precedentes, sin inventar cifras).
+5) **Siguiente paso** — solo entonces 1-2 preguntas sencillas que el usuario SÍ pueda responder.
+
+TONO: lindo, directo, honesto. El usuario quiere saber **cómo puede impactar** y **qué riesgos hay**; no un cuestionario.
+
+▓▓▓ RESTRICCIONES (violar = fallo) ▓▓▓
+1. MÁXIMO 1-2 preguntas por turno, siempre en ## Siguiente paso (al final).
+2. NO empieces con preguntas ni con listas de "aspectos a considerar".
+3. NO pidas al usuario lo que TÚ investigas (normativa, precedentes, criterios del organismo).
+4. Ante ambigüedad, SUGIERE opciones: "Veo camino A o B; ¿cuál se acerca más?"
+5. Sé breve en fases 0-2: reparte en secciones cortas (no un muro de texto).
+6. NO inventes cifras ni porcentajes sin base. PDF solo si pdf_ready={state.pdf_ready}.
+7. PROHIBIDO manual numerado (1. Marco normativo 2. Requisitos…) o título tipo "Creación de Instituto de…".
+8. PROHIBIDO "¿Te gustaría profundizar…?" — las preguntas van solo en ## Siguiente paso, al final.
 """
     if state.phase == CoachingPhase.DESCUBRIR:
         return base + """
 ═══ FASE DESCUBRIR ═══
-RESPUESTA MÁXIMA: 4 párrafos cortos + 1 pregunta.
-Estructura EXACTA (nada más):
+Estructura EXACTA (en el chat; respeta el orden):
 
 ## Mi opinión como CEDIT
-(2-3 frases: qué captaste de su idea + una perspectiva útil o caso similar que conozcas del contexto normativo. NO listes aspectos a considerar. OFRECE valor.)
+(1-2 frases cálidas: qué entendiste de su sueño o problema.)
+
+## Cómo va tomando forma su idea
+(2 frases: de idea vaga → hacia qué tipo de proyecto público va; qué pieza falta para afinar.)
+
+## Recomendaciones
+(2 viñetas concretas: ruta, programa estatal o referencia de obra similar investigada.)
+
+## Qué podría lograr y qué podría pasar
+(1 frase de impacto positivo realista + 1 escenario de riesgo honesto, sin dramatizar.)
 
 ## Siguiente paso
-(UNA sola pregunta directa y concreta que TÚ eliges. No "¿sobre qué quieres hablar?". Elige lo más crítico. Ejemplo: "¿El proyecto lo ejecutaría un gobierno regional o una municipalidad?")
+(UNA pregunta al final. Ej.: "¿Lo lideraría una municipalidad o un gobierno regional?")
 
-PROHIBIDO:
-- Listas de "aspectos a considerar"
-- Más de 1 pregunta
-- Frases como "¿Te gustaría profundizar en alguno de estos aspectos?"
-- Dictamen técnico
-- Párrafos con definiciones genéricas
+PROHIBIDO: preguntas antes de recomendar; dictamen formal; más de 1 pregunta.
 """
     if state.phase == CoachingPhase.DIAGNOSTICAR:
         return base + """
 ═══ FASE DIAGNOSTICAR ═══
-RESPUESTA MÁXIMA: 5 párrafos + 1-2 preguntas.
 Estructura EXACTA:
 
 ## Mi opinión como CEDIT
-(Resume lo que SABES del proyecto. Ofrece UN insight de valor: normativa aplicable, caso similar, riesgo temprano, o componente Invierte.pe sugerido. NO hagas una lista de preguntas disfrazadas de "aspectos".)
+(Reconoce avance y emoción detrás del proyecto — 1-2 frases.)
+
+## Cómo va tomando forma su idea
+(Narrativa clara: problema → solución tentativa → encaje MEF/sector; qué maduró desde el turno anterior.)
+
+## Recomendaciones
+(2-3 viñetas: normativa o ventanilla clave, programa impulsador si aplica, ajuste de enfoque sugerido.)
+
+## Qué podría lograr y qué podría pasar
+(Impacto en beneficiarios/territorio + escenario favorable y uno adverso plausible, con transparencia.)
 
 ## Siguiente paso
-(1-2 preguntas máximo: prioriza ubicación y quién ejecuta. Sé específico: "¿Municipalidad distrital de X o gobierno regional?" NO preguntes todo de golpe.)
+(1-2 preguntas al final: ubicación y/o ejecutor, lenguaje sencillo.)
 
 ## Lo que ya sabemos
-(Lista corta de datos que YA captaste: problema, sector, actor tentativo.)
+(Checklist breve ✓ — no repetir en párrafos anteriores.)
 
-PROHIBIDO:
-- Más de 2 preguntas
-- Listas de "consideraciones" o "aspectos importantes"
-- Preguntas que el agente podría responder buscando normativa
+PROHIBIDO: preguntas antes de recomendaciones; listas genéricas de "aspectos".
 """
     if state.phase == CoachingPhase.RECOPILAR:
         missing = state.data_gaps[:2]
         focus = ", ".join(missing) if missing else "datos restantes"
         return base + f"""
-═══ FASE RECOPILAR — Foco: {focus} ═══
-RESPUESTA MÁXIMA: 5 párrafos + 1-2 preguntas.
+═══ FASE RECOPILAR — Foco próximo dato: {focus} ═══
 Estructura EXACTA:
 
 ## Mi opinión como CEDIT
-(Valida avance, da UN dato útil: "Para proyectos educativos en selva, el MEF suele exigir X". OFRECE perspectiva.)
+(Celebra un dato bien aportado; 1 frase de confianza en el proceso.)
+
+## Cómo va tomando forma su idea
+("Su expediente pasó de …% a …% de claridad; ahora el MEF vería esto como…; falta cerrar: {focus}.")
+
+## Recomendaciones
+(2-3 viñetas priorizadas: qué reforzar YA, programa o cofinanciamiento, buena práctica de un caso similar.)
+
+## Qué podría lograr y qué podría pasar
+(Impacto si logra viabilidad + qué podría frenarlo si no completa {focus} — realista, sin inventar números.)
 
 ## Siguiente paso
-(1-2 preguntas SOLO sobre: {focus}. Explica en 1 frase POR QUÉ el MEF necesita ese dato. Si puedes SUGERIR un rango o referencia, hazlo.)
+(1-2 preguntas SOLO sobre {focus}, al final, lenguaje cotidiano y por qué ayuda en 1 frase.)
 
 ## Avance del expediente
-(Checklist visual: ✓ lo que tenemos / ○ lo que falta)
+(✓ / ○ checklist — no duplicar en secciones anteriores.)
 
-PROHIBIDO:
-- Más de 2 preguntas
-- Preguntas sobre temas que ya respondió el usuario
-- Listas genéricas de "aspectos a considerar"
+PROHIBIDO: preguntas antes de recomendaciones; SNIP/CUI/códigos técnicos; repetir lo ya respondido.
 """
     if state.phase == CoachingPhase.EVALUAR_RIESGO:
         return base + """

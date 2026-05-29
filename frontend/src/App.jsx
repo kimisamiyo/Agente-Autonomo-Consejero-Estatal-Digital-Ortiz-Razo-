@@ -225,8 +225,10 @@ function App() {
 
   const applyBotPayload = (data, extra = {}) => {
     const mode = data.mode || 'chat';
+    const inputMode = data.input_mode || mode;
+    const mentorMode = inputMode === 'audit' || inputMode === 'plan' || mode === 'audit' || mode === 'plan';
     const billable = data.consumes_audit_credit === true;
-    if (billable) setSessionMode(data.input_mode === 'plan' ? 'plan' : 'audit');
+    if (billable) setSessionMode(inputMode === 'plan' ? 'plan' : 'audit');
     else if (mode === 'freemium') setSessionMode('freemium');
     if (data.usage) setUsage(data.usage);
     const content = data.display || data.response || '';
@@ -234,8 +236,8 @@ function App() {
       role: 'bot',
       content,
       fullContent: data.response,
-      mode,
-      isAudit: mode === 'audit',
+      mode: mentorMode ? inputMode : mode,
+      isAudit: mentorMode,
       showPdf: data.show_pdf ?? false,
       opinion: data.opinion,
       strengths: data.strengths,
@@ -249,6 +251,8 @@ function App() {
       guideGraph: data.guide_graph,
       guidePhase: data.guide_phase,
       guideCompleteness: data.guide_completeness,
+      mentorActivity: data.mentor_activity || '',
+      monitoringFigures: data.monitoring_figures || [],
       ...extra,
     };
   };

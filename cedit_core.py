@@ -22,9 +22,12 @@ from langchain_core.messages import HumanMessage, AIMessage
 from guide_engine import (
     assess_guide_state,
     build_graph_visualization,
+    build_mentor_activity_message,
+    detect_public_figures,
     format_guide_progress,
     guide_phase_instruction,
     risk_level_from_index,
+    CoachingPhase,
 )
 
 load_dotenv()
@@ -184,6 +187,18 @@ def is_plan_audit_request(message: str, has_pdf: bool = False) -> bool:
         x in t for x in ("presupuesto", "viabilidad", "snip", "componente", "dictamen", "mef")
     ):
         return True
+    formulation_signals = (
+        "crear un", "crear una", "quiero crear", "me gustaría", "me gustaria",
+        "es posible", "instituto", "universidad", "centro educativo", "escuela",
+        "carrera de", "programa de estudios", "formular un proyecto", "mi idea es",
+        "tengo la idea", "proyecto de inversión", "proyecto de inversion",
+    )
+    if sum(1 for s in formulation_signals if s in t) >= 2:
+        return True
+    if any(s in t for s in ("instituto", "proyecto", "obra", "pip ")) and any(
+        s in t for s in ("crear", "gustaría", "gustaria", "quiero", "formular", "tratar")
+    ):
+        return True
     return False
 
 
@@ -272,13 +287,26 @@ def should_offer_pdf(
     is_audit: bool = False,
     *,
     guide_state: Optional[Any] = None,
+    mef_score: Optional[Dict[str, Any]] = None,
 ) -> bool:
     mode = detect_response_mode(content, is_audit=is_audit)
     if mode not in ("audit", "plan"):
         return False
-    if guide_state is not None:
-        return guide_state.pdf_ready
-    return mode in ("audit", "plan")
+    if guide_state is None:
+        return False
+    if not guide_state.pdf_ready:
+        return False
+    if guide_state.phase.value < CoachingPhase.ORIENTAR.value:
+        return False
+    if not mef_score:
+        return False
+    est = int(mef_score.get("estimated_with_official_plan", 0) or 0)
+    risk = int(mef_score.get("risk_index", 100) or 100)
+    if est < MEF_APPROVAL_THRESHOLD:
+        return False
+    if risk >= 70:
+        return False
+    return True
 
 
 _DATA_GAP_CHECKS: List[Tuple[str, str, List[str]]] = [
@@ -429,18 +457,51 @@ def format_mef_score_markdown(score: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# Preguntas en lenguaje cotidiano (no jerga MEF/SNIP en fases tempranas).
+_GAP_SIMPLE_QUESTIONS: Dict[str, str] = {
+    "presupuesto total y desglose (soles, componentes)": (
+        "¿Tiene un monto aproximado en soles (aunque sea un rango, por ejemplo entre 500 mil y 2 millones)?"
+    ),
+    "plazo de ejecución y cronograma": (
+        "¿En cuántos meses o años imagina el proyecto y cuándo le gustaría empezar (año aproximado)?"
+    ),
+    "ubicación (ubigeo, región, provincia, distrito)": (
+        "¿En qué región, provincia y distrito estaría el centro o la obra?"
+    ),
+    "entidad ejecutora y unidad formuladora": (
+        "¿Quién lo ejecutaría en la práctica (municipalidad, gobierno regional, universidad, otro)?"
+    ),
+    "población beneficiaria e indicadores": (
+        "¿A cuántas personas o familias beneficiaría más o menos (número aproximado)?"
+    ),
+}
+
+# No pedir al usuario datos que rara vez tiene en mano en RECOPILAR/DIAGNOSTICAR.
+_GAPS_SKIP_EARLY_PHASES = frozenset({
+    "código SNIP o CUI del proyecto",
+    "objetivos, productos y componente Invierte.pe",
+})
+
+
 def append_followup_questions(content: str, gaps: List[str]) -> str:
     if not gaps or "## para alimentar" in content.lower():
         return content
     lines = ["\n\n## Para alimentar su plan técnico (PDF)\n"]
-    templates = [
-        "¿Podría contarme más sobre el **{}** de su proyecto?",
-        "¿Qué detalle tiene del **{}** para incorporarlo al expediente MEF?",
-    ]
-    for i, gap in enumerate(gaps):
-        lines.append(f"- {templates[i % 2].format(gap)}")
+    added = 0
+    for gap in gaps[:2]:
+        if gap in _GAPS_SKIP_EARLY_PHASES:
+            continue
+        q = _GAP_SIMPLE_QUESTIONS.get(gap)
+        if q:
+            lines.append(f"- {q}")
+        else:
+            plain = gap.split("(")[0].strip().lower()
+            lines.append(f"- ¿Podría contarme sobre **{plain}**?")
+        added += 1
+    if added == 0:
+        return content
     lines.append(
-        "\n*Sus respuestas enriquecerán el **Plan Técnico Oficial (PDF)** de ~9-10 páginas.*"
+        "\n*Con lo que nos cuente iremos armando el plan oficial; no hace falta códigos técnicos aún.*"
     )
     return content + "\n".join(lines)
 
@@ -830,23 +891,52 @@ AUDIT_STRUCTURE_INSTRUCTION = """
 MÁXIMA PRIORIDAD: La estructura y longitud de tu respuesta la define [FASE GRAFO] más arriba.
 Si la fase es DESCUBRIR, DIAGNOSTICAR o RECOPILAR → OBEDECE sus restricciones de formato SIN EXCEPCIÓN.
 
+PROHIBIDO (formato enciclopedia / manual — lo que el usuario NO quiere):
+• Listas numeradas largas tipo "1. Marco normativo 2. Requisitos 3. Duración…".
+• Títulos sueltos tipo "Creación de Instituto de…" sin las secciones ## del mentor.
+• Subsecciones genéricas (Denominación, Objetivos, Diseño curricular…) copiadas de manuales SUNEDU.
+• Cerrar con "¿Te gustaría profundizar…?", "¿necesitas ayuda para elaborar…?" o variantes.
+• Más de 12 líneas totales en fases 0-2 sin usar las secciones ## obligatorias del grafo.
+
 PROHIBICIONES ABSOLUTAS EN FASES TEMPRANAS (0-2):
 • NO hagas listas de "aspectos a considerar" (el usuario no las pidió).
 • NO hagas más de 2 preguntas por mensaje. JAMÁS.
-• NO escribas más de 4 párrafos.
-• NO preguntes cosas que TÚ podrías investigar con el contexto normativo que tienes.
+• NO escribas más de 4 párrafos repartidos en las secciones ## (no un solo bloque).
+• NO preguntes cosas que TÚ debes investigar (normativa, obras similares, criterios del organismo, precedentes).
 • NO termines con "¿Te gustaría profundizar en alguno...?" — TÚ DECIDES la dirección.
 
-COMPORTAMIENTO DE LÍDER:
-• Ofrece PERSPECTIVA: compara con proyectos similares, menciona riesgos tempranos, sugiere opciones.
-• Haz preguntas CERRADAS o de opción: "¿Lo ejecutaría municipalidad o GORE?" no "¿Cuáles son tus objetivos?"
-• Si el usuario da una idea vaga, INTERPRETA lo que probablemente necesita y valida: "Suena a un PIP de educación componente 1. ¿Correcto?"
-• GUÍA = tú propones dirección; el usuario solo confirma o corrige.
+COMPORTAMIENTO DE GUÍA (orden del mensaje):
+1. Muestra cómo **va transformándose su idea** (de vaga → expediente concreto).
+2. Da **recomendaciones** y análisis (programas, ruta, precedentes) — con tono lindo y transparente.
+3. Explica **qué podría lograr** (impacto) y **qué podría pasar** (riesgos reales, sin alarmismo ni promesas vacías).
+4. Solo al final, **1-2 preguntas** sencillas que el usuario pueda responder.
+
+• INVESTIGA antes de preguntar: obras similares, organismo, qué aprobó o observó el MEF.
+• NO empieces el turno con preguntas ni con listas de "aspectos a considerar".
+• Pregunta solo lo que el usuario PUEDE saber (lugar, ejecutor, plazo/monto aproximados).
+• NO pidas SNIP/CUI/códigos técnicos en fases tempranas.
+• GUÍA = propones dirección; el usuario confirma o corrige.
 
 SEGURIDAD: Si es ilegal o fraudulento, rechaza sin usar esta estructura.
 NO inventes cifras. PDF solo en CONSOLIDAR o completitud ≥70%.
 RECOLECCIÓN en fases avanzadas: extrae datos del expediente (denominación, SNIP/CUI, entidad, ubigeo, costo, plazo, componente, beneficiarios).
 """
+
+
+def sanitize_mentor_response(content: str) -> str:
+    """Quita cierres tipo enciclopedia que el modelo aún suele generar."""
+    if not content:
+        return content
+    banned_patterns = [
+        r"¿\s*te gustaría profundizar[^\n?]*\?",
+        r"¿\s*necesitas ayuda para elaborar[^\n?]*\?",
+        r"¿\s*deseas que profundice[^\n?]*\?",
+        r"¿\s*quieres que profundice[^\n?]*\?",
+    ]
+    out = content
+    for pat in banned_patterns:
+        out = re.sub(pat, "", out, flags=re.I)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 AUDIT_PDF_GATHERING_INSTRUCTION = """
 Al auditar un documento adjunto (PDF), extrae y utiliza TODA la información disponible:
@@ -1093,7 +1183,9 @@ def run_chat(
     guide_state = None
     if mode in ("audit", "plan"):
         guide_state = assess_guide_state(message, history, has_pdf=False)
-        prefix_instructions += "\n\n[FASE GRAFO — OBEDECE ESTAS RESTRICCIONES]\n" + guide_phase_instruction(guide_state)
+        prefix_instructions += "\n\n[FASE GRAFO — OBEDECE ESTAS RESTRICCIONES]\n" + guide_phase_instruction(
+            guide_state, message, history
+        )
         prefix_instructions += "\n" + format_guide_progress(guide_state) + "\n"
         if mode == "audit":
             prefix_instructions += "\n" + AUDIT_PDF_GATHERING_INSTRUCTION + "\n" + AUDIT_STRUCTURE_INSTRUCTION
@@ -1113,12 +1205,20 @@ def run_chat(
         input=formatted_input,
     )
     respuesta = llm.invoke(messages)
-    content = respuesta.content
+    content = sanitize_mentor_response(respuesta.content or "")
     response_mode = detect_response_mode(content, is_audit=(mode == "audit"))
+    if mode in ("audit", "plan"):
+        response_mode = mode
 
     usage = get_usage(scope)
     if not skip_usage and billable:
         usage = increment_usage(scope, "audit")
+
+    mef_score = None
+    if (response_mode == "audit" or mode in ("audit", "plan")) and guide_state is not None:
+        combined = _combined_audit_text(message + "\n" + content, history)
+        if guide_state.phase.value >= CoachingPhase.RECOPILAR.value or len(combined) > 200:
+            mef_score = score_document_against_mef(combined, "conversacion.txt", normative_ctx=contexto)
 
     result = {
         "response": content,
@@ -1126,15 +1226,26 @@ def run_chat(
         "input_mode": mode,
         "consumes_audit_credit": billable,
         "usage": usage,
-        "show_pdf": should_offer_pdf(content, is_audit=(mode == "audit"), guide_state=guide_state),
+        "show_pdf": should_offer_pdf(
+            content,
+            is_audit=(mode == "audit"),
+            guide_state=guide_state,
+            mef_score=mef_score,
+        ),
+        "mentor_activity": build_mentor_activity_message(message, history),
+        "monitoring_figures": detect_public_figures(message, history),
     }
     if response_mode == "audit" or mode in ("audit", "plan"):
         if guide_state is None:
             guide_state = assess_guide_state(message, history, has_pdf=False)
         gaps = detect_project_data_gaps(content, history)
-        if guide_state.phase.value < 3:
+        if guide_state.phase.value < CoachingPhase.EVALUAR_RIESGO.value:
             content = append_followup_questions(content, gaps)
+            content = sanitize_mentor_response(content)
         sections = parse_audit_sections(content)
+        if not sections.get("opinion") and guide_state.phase.value < CoachingPhase.EVALUAR_RIESGO.value:
+            sections["opinion"] = content
+            sections["display"] = ""
         result["response"] = content
         result["opinion"] = sections.get("opinion", "")
         result["strengths"] = sections.get("strengths", "")
@@ -1146,10 +1257,14 @@ def run_chat(
         result["guide_completeness"] = guide_state.completeness_pct
         result["guide_graph"] = build_graph_visualization(guide_state)
         result["guide_state"] = guide_state.to_dict()
-        combined = _combined_audit_text(message + "\n" + content, history)
-        if guide_state.phase.value >= 2 or len(combined) > 200:
-            mef_score = score_document_against_mef(combined, "conversacion.txt", normative_ctx=contexto)
+        if mef_score:
             result["mef_score"] = mef_score
+        result["show_pdf"] = should_offer_pdf(
+            content,
+            is_audit=True,
+            guide_state=guide_state,
+            mef_score=mef_score,
+        )
     return result
 
 
@@ -1195,13 +1310,11 @@ def run_audit_pdf(
         f"CONTENIDO DEL DOCUMENTO:\n{text[:PDF_CHAT_EXTRACT_LIMIT]}\n"
         f"{user_note}\n\n"
         f"{cedit_identity_instruction(history, user_text or filename, locale)}\n"
-        f"[FASE GRAFO]\n{guide_phase_instruction(guide_state)}\n"
+        f"[FASE GRAFO]\n{guide_phase_instruction(guide_state, user_text or text, history)}\n"
         f"{format_guide_progress(guide_state)}\n"
         f"{AUDIT_PDF_GATHERING_INSTRUCTION}\n"
         f"{AUDIT_STRUCTURE_INSTRUCTION}"
     )
-
-    mef_score = score_document_against_mef(text, filename, normative_ctx=contexto)
 
     messages = prompt.format_messages(
         context=contexto,
@@ -1210,14 +1323,18 @@ def run_audit_pdf(
     )
     respuesta = llm.invoke(messages)
     content = respuesta.content
-    content += format_mef_score_markdown(mef_score)
     gaps = detect_project_data_gaps(text, history)
-    if guide_state.phase.value < 3:
+    if guide_state.phase.value < CoachingPhase.EVALUAR_RIESGO.value:
         content = append_followup_questions(content, gaps)
     sections = parse_audit_sections(content)
     usage = get_usage(scope)
     if not skip_usage:
         usage = increment_usage(scope, "audit")
+
+    combined_pdf = _combined_audit_text((user_text or "") + "\n" + text + "\n" + content, history)
+    mef_score_pdf = score_document_against_mef(combined_pdf, filename, normative_ctx=contexto)
+    if guide_state.phase.value >= CoachingPhase.EVALUAR_RIESGO.value:
+        content += format_mef_score_markdown(mef_score_pdf)
 
     return {
         "response": content,
@@ -1230,13 +1347,20 @@ def run_audit_pdf(
         "input_mode": "audit",
         "consumes_audit_credit": True,
         "usage": usage,
-        "show_pdf": guide_state.pdf_ready,
+        "show_pdf": should_offer_pdf(
+            content,
+            is_audit=True,
+            guide_state=guide_state,
+            mef_score=mef_score_pdf,
+        ),
+        "mentor_activity": build_mentor_activity_message(user_text or text, history),
+        "monitoring_figures": detect_public_figures(user_text or text, history),
         "source_excerpt": text[:PDF_AUDIT_TEXT_LIMIT],
         "page_count": page_count,
         "char_count": char_count,
         "data_gaps": gaps,
         "needs_more_info": bool(gaps),
-        "mef_score": mef_score,
+        "mef_score": mef_score_pdf,
         "guide_phase": guide_state.phase_name,
         "guide_completeness": guide_state.completeness_pct,
         "guide_graph": build_graph_visualization(guide_state),

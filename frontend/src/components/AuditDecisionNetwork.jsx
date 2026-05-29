@@ -28,6 +28,8 @@ const AuditDecisionNetwork = ({
   activeCheckpointId = null,
   onRestore,
   onPositionChange,
+  expanded: expandedProp,
+  onExpandedChange,
   className = '',
 }) => {
   const { t } = useI18n();
@@ -35,7 +37,18 @@ const AuditDecisionNetwork = ({
   const [size, setSize] = useState({ w: 640, h: 320 });
   const [dragging, setDragging] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
-  const [expanded, setExpanded] = useState(true);
+  const [expandedInternal, setExpandedInternal] = useState(false);
+  const isControlled = expandedProp !== undefined;
+  const expanded = isControlled ? Boolean(expandedProp) : expandedInternal;
+
+  const toggleExpanded = () => {
+    const next = !expanded;
+    if (isControlled) {
+      onExpandedChange?.(next);
+    } else {
+      setExpandedInternal(next);
+    }
+  };
 
   const sorted = useMemo(
     () => [...checkpoints].sort((a, b) => a.messageIndex - b.messageIndex),
@@ -101,35 +114,41 @@ const AuditDecisionNetwork = ({
 
   if (!sorted.length) return null;
 
+  const latest = sorted[sorted.length - 1];
+
   return (
     <div
-      className={`rounded-2xl border-2 border-indigo-200/80 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 shadow-xl overflow-hidden ${className}`}
+      className={`rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden h-full flex flex-col ${
+        !expanded ? 'cedit-network-pulse-light' : ''
+      } ${className}`}
     >
-      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-indigo-500/30 bg-black/20">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="material-symbols-outlined text-indigo-300 text-lg">hub</span>
-          <div>
-            <p className="text-xs font-bold text-indigo-100 tracking-wide">{t('decision.title')}</p>
-            <p className="text-[10px] text-indigo-300/90 truncate">{t('decision.subtitle')}</p>
+      <button
+        type="button"
+        onClick={toggleExpanded}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100 bg-slate-50/80 hover:bg-slate-100 transition-colors text-left min-h-[56px]"
+      >
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="material-symbols-outlined text-slate-600 text-lg shrink-0">hub</span>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-800 tracking-wide">{t('decision.title')}</p>
+            <p className="text-[10px] text-slate-500 truncate mt-0.5">
+              {expanded ? t('decision.subtitle') : t('decision.collapsedHint', { count: sorted.length, phase: latest?.label || '—' })}
+            </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="text-[10px] font-semibold text-indigo-200 hover:text-white px-2 py-1 rounded-lg border border-indigo-500/40"
-        >
+        <span className="shrink-0 text-[10px] font-semibold text-slate-700 px-2.5 py-1 rounded-md border border-slate-200 bg-white">
           {expanded ? t('decision.collapse') : t('decision.expand')}
-        </button>
-      </div>
+        </span>
+      </button>
 
       {expanded && (
         <>
           <div
             ref={containerRef}
-            className="relative w-full h-[min(340px,42vh)] min-h-[240px] select-none touch-none"
+            className="relative w-full h-[min(240px,32vh)] min-h-[200px] max-h-[320px] select-none touch-none bg-slate-50"
             style={{
               backgroundImage:
-                'radial-gradient(circle at 20% 30%, rgba(99,102,241,0.15) 0%, transparent 45%), radial-gradient(circle at 80% 70%, rgba(59,130,246,0.12) 0%, transparent 40%)',
+                'radial-gradient(circle at 20% 30%, rgba(148,163,184,0.2) 0%, transparent 45%), radial-gradient(circle at 80% 70%, rgba(203,213,225,0.25) 0%, transparent 40%)',
             }}
           >
             {/* Grid neuronal */}
@@ -206,8 +225,8 @@ const AuditDecisionNetwork = ({
                     width: NODE_W,
                     height: NODE_H,
                     boxShadow: isActive || isHover
-                      ? `0 0 24px ${style.glow}, 0 8px 20px rgba(0,0,0,0.4)`
-                      : '0 4px 12px rgba(0,0,0,0.35)',
+                      ? `0 0 16px ${style.glow}, 0 4px 12px rgba(15,23,42,0.12)`
+                      : '0 2px 8px rgba(15,23,42,0.08)',
                   }}
                   onPointerDown={(e) => handlePointerDown(e, cp.id)}
                   onMouseEnter={() => setHoveredId(cp.id)}
@@ -225,19 +244,21 @@ const AuditDecisionNetwork = ({
                       backgroundColor: style.fill,
                     }}
                   >
-                    <span className="text-[8px] font-black uppercase tracking-tighter text-slate-800 leading-none">
+                    <span className="text-[9px] font-black uppercase tracking-tight text-black leading-none">
                       {cp.label?.slice(0, 12)}
                     </span>
-                    <span className="text-[7px] text-slate-600 mt-0.5 leading-tight">{cp.subtitle}</span>
+                    <span className="text-[8px] font-semibold text-slate-900 mt-0.5 leading-tight line-clamp-2">
+                      {cp.subtitle}
+                    </span>
                   </div>
 
                   {(isHover || isActive) && (
                     <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-40 w-[200px]">
-                      <div className="rounded-xl border border-indigo-400/50 bg-slate-900/95 text-indigo-50 p-2.5 shadow-2xl backdrop-blur-sm">
-                        <p className="text-[9px] text-indigo-300 font-bold uppercase">{t('decision.node')}</p>
+                      <div className="rounded-xl border border-slate-200 bg-white text-slate-800 p-2.5 shadow-lg">
+                        <p className="text-[9px] text-slate-500 font-bold uppercase">{t('decision.node')}</p>
                         <p className="text-[10px] mt-1 line-clamp-2">{cp.userPrompt}</p>
                         {cp.mentorMessage && (
-                          <p className="text-[9px] text-indigo-200/80 mt-1 italic line-clamp-2">{cp.mentorMessage}</p>
+                          <p className="text-[9px] text-slate-500 mt-1 italic line-clamp-2">{cp.mentorMessage}</p>
                         )}
                         <button
                           type="button"
@@ -258,17 +279,17 @@ const AuditDecisionNetwork = ({
             })}
           </div>
 
-          <div className="px-4 py-2.5 border-t border-indigo-500/20 bg-black/25 flex flex-wrap items-center gap-2 text-[9px] text-indigo-300">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-indigo-400 rounded" />
+          <div className="px-4 py-2.5 border-t border-slate-200 bg-slate-100 flex flex-wrap items-center gap-3 text-[10px] text-slate-800 font-medium">
+            <span className="flex items-center gap-1.5">
+              <span className="w-4 h-0.5 bg-slate-600 rounded" />
               {t('decision.legendTimeline')}
             </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 border-t border-dashed border-cyan-400" />
+            <span className="flex items-center gap-1.5">
+              <span className="w-4 h-0.5 border-t-2 border-dashed border-slate-500" />
               {t('decision.legendLateral')}
             </span>
-            <span className="flex items-center gap-1">
-              <span className="material-symbols-outlined text-[12px]">drag_indicator</span>
+            <span className="flex items-center gap-1.5 text-slate-800">
+              <span className="material-symbols-outlined text-[14px] text-slate-700">drag_indicator</span>
               {t('decision.legendDrag')}
             </span>
           </div>

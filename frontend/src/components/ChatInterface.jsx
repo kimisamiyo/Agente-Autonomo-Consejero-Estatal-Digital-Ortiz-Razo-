@@ -3,8 +3,11 @@ import ReactMarkdown from 'react-markdown';
 import axios from 'axios';
 import ToolsDropdown from './ToolsDropdown';
 import MefScoreCard from './MefScoreCard';
+import MentorInsightPanel from './MentorInsightPanel';
 import GuideGraphTrail from './GuideGraphTrail';
 import AuditDecisionNetwork from './AuditDecisionNetwork';
+import { canShowPdfOffer, isEarlyGuidePhase, shouldShowSyscoinBadge } from '../utils/pdfEligibility';
+import { getMentorLoadingLabel } from '../utils/mentorActivity';
 import { isAuditSession } from '../utils/auditDecisionPoints';
 import PdfLanguageModal from './PdfLanguageModal';
 import { saveExpediente } from '../utils/expedientesStore';
@@ -17,6 +20,7 @@ import {
   ceditBtnSecondaryClass,
 } from '../theme/ceditPalette';
 import { stripMefIndexMarkdown } from '../utils/stripMefMarkdown';
+import { splitOpinionContent, buildMentorPanelMarkdown } from '../utils/splitOpinionContent';
 
 function BotMessageHeader({ mode, subtitle, modeBadge }) {
   const badge = modeBadge[mode] || modeBadge.chat;
@@ -94,8 +98,11 @@ const ChatInterface = ({
   const [refineTarget, setRefineTarget] = useState(null);
   const [generatingPdf, setGeneratingPdf] = useState(null);
   const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
+  /** 'network' | 'mentor' | null — solo un panel del header abierto a la vez */
+  const [headerPanelOpen, setHeaderPanelOpen] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const mentorPanelRef = useRef(null);
 
   const welcomeCards = useMemo(
     () => [
@@ -135,10 +142,55 @@ const ChatInterface = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  const shouldShowPdfButton = (msg) => {
-    if (msg.showPdf) return true;
-    if (msg.isAudit) return true;
-    return false;
+  const lastUserText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === 'user') return messages[i].content || '';
+    }
+    return '';
+  }, [messages]);
+
+  const loadingStatusText = useMemo(() => {
+    if (!isLoading) return '';
+    return getMentorLoadingLabel(lastUserText, t);
+  }, [isLoading, lastUserText, t]);
+
+  const latestMentorInsight = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (m.role !== 'assistant' && m.role !== 'bot') continue;
+      if (m.isDocAck) continue;
+      if (!m.isAudit && m.mode !== 'audit' && m.mode !== 'plan') continue;
+      if (m.opinion || m.guideGraph) {
+        const panelMarkdown = buildMentorPanelMarkdown(
+          m.opinion,
+          m.fullContent,
+          m.content
+        );
+        const { chat: chatOpinion } = splitOpinionContent(m.opinion || '');
+        return { index: i, msg: m, chatOpinion, panelMarkdown };
+      }
+    }
+    return null;
+  }, [messages]);
+
+  const showMentorHeader =
+    Boolean(latestMentorInsight?.panelMarkdown || latestMentorInsight?.msg?.guideGraph);
+  const showPlanHeader = showDecisionNetwork || showMentorHeader;
+
+  useEffect(() => {
+    setHeaderPanelOpen(null);
+  }, [latestMentorInsight?.index]);
+
+  const getPdfLockReason = (msg) => {
+    const gate = canShowPdfOffer(msg);
+    if (gate.show) return null;
+    if (gate.reason === 'score') {
+      return t('chat.pdfLockedScore', { threshold: 80, est: gate.est ?? 0 });
+    }
+    if (gate.reason === 'risk') {
+      return t('chat.pdfLockedRisk', { risk: gate.risk ?? 0 });
+    }
+    return t('chat.pdfLockedPhase');
   };
 
   const handleSend = () => {
@@ -186,6 +238,7 @@ const ChatInterface = ({
   };
 
   const runGeneratePDF = async (msg, index, pdfOutputLanguage = 'es') => {
+    if (!canShowPdfOffer(msg).show) return;
     setGeneratingPdf(index);
     try {
       const content = msg.fullContent || msg.content;
@@ -367,16 +420,42 @@ const ChatInterface = ({
         </div>
       )}
 
-      {showDecisionNetwork && (
-        <div className="shrink-0 w-full px-4 py-3 flex justify-center border-b border-indigo-200/60 bg-slate-50/80 z-10">
-          <div className="w-full max-w-[850px]">
-            <AuditDecisionNetwork
-              checkpoints={decisionCheckpoints}
-              positions={nodePositions}
-              activeCheckpointId={activeCheckpointId}
-              onRestore={handleRestoreCheckpoint}
-              onPositionChange={onNodePositionChange}
-            />
+      {showPlanHeader && (
+        <div className="shrink-0 w-full px-3 sm:px-5 py-2.5 border-b border-slate-200 bg-white z-10">
+          <div
+            className={`w-full max-w-[min(1440px,100%)] mx-auto flex gap-3 items-stretch min-h-[56px] ${
+              showDecisionNetwork && showMentorHeader ? 'flex-col lg:flex-row' : 'flex-col'
+            }`}
+          >
+            {showDecisionNetwork && (
+              <div className={showMentorHeader ? 'lg:flex-1 min-w-0' : 'w-full'}>
+                <AuditDecisionNetwork
+                  checkpoints={decisionCheckpoints}
+                  positions={nodePositions}
+                  activeCheckpointId={activeCheckpointId}
+                  onRestore={handleRestoreCheckpoint}
+                  onPositionChange={onNodePositionChange}
+                  expanded={headerPanelOpen === 'network'}
+                  onExpandedChange={(open) => setHeaderPanelOpen(open ? 'network' : null)}
+                />
+              </div>
+            )}
+            {showMentorHeader && (
+              <div
+                ref={mentorPanelRef}
+                className={showDecisionNetwork ? 'lg:flex-1 min-w-0 min-h-[56px]' : 'w-full'}
+              >
+                <MentorInsightPanel
+                  messageKey={latestMentorInsight.index}
+                  panelMarkdown={latestMentorInsight.panelMarkdown}
+                  guideGraph={latestMentorInsight.msg.guideGraph}
+                  mefScore={latestMentorInsight.msg.mefScore}
+                  guidePhase={latestMentorInsight.msg.guidePhase}
+                  expanded={headerPanelOpen === 'mentor'}
+                  onExpandedChange={(open) => setHeaderPanelOpen(open ? 'mentor' : null)}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -414,7 +493,15 @@ const ChatInterface = ({
               </div>
             </div>
           ) : (
-            messages.map((msg, index) => (
+            messages.map((msg, index) => {
+              const isLatestMentorInsight =
+                latestMentorInsight?.index === index &&
+                msg.role !== 'user' &&
+                (msg.opinion || msg.guideGraph);
+              const chatOpinionText = isLatestMentorInsight
+                ? latestMentorInsight.chatOpinion || msg.opinion
+                : msg.opinion;
+              return (
               <div
                 key={index}
                 className={`flex w-full cedit-message-enter ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -441,7 +528,7 @@ const ChatInterface = ({
                     <div
                       className={`p-6 sm:p-8 rounded-2xl rounded-tl-md transition-shadow duration-300 ${
                         msg.isAudit || msg.isDocAck
-                          ? `cedit-audit-glow ${ceditCardClass('blue')}`
+                          ? 'bg-white border border-slate-200 shadow-sm'
                           : msg.mode === 'freemium'
                             ? ceditCardClass('gray')
                             : `${ceditCardClass('gray')} hover:shadow-md`
@@ -458,26 +545,50 @@ const ChatInterface = ({
                         </div>
                       )}
 
-                      {msg.isAudit && msg.opinion && !msg.isDocAck && (
-                        <div className={`mb-4 p-4 ${ceditCardClass('blue')} cedit-fade-in`}>
+                      {msg.isAudit && chatOpinionText && !msg.isDocAck && (
+                        <div className="mb-4 p-4 rounded-xl border border-slate-200 bg-slate-50/50 cedit-fade-in">
                           <div className="flex items-center gap-2 mb-2">
-                            <div className={ceditIconBoxClass('blue', 'w-8 h-8')}>
+                            <div className={ceditIconBoxClass('gray', 'w-8 h-8')}>
                               <span className="material-symbols-outlined text-white text-base">favorite</span>
                             </div>
-                            <p className={ceditLabelClass('blue')}>{t('chat.myOpinion')}</p>
+                            <p className={ceditLabelClass('gray')}>{t('chat.myOpinion')}</p>
+                            {isLatestMentorInsight && showMentorHeader && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setHeaderPanelOpen('mentor');
+                                  mentorPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                }}
+                                className="ml-auto text-[10px] font-semibold text-slate-600 hover:text-slate-900 underline"
+                              >
+                                {t('chat.mentorPanelLink')}
+                              </button>
+                            )}
                           </div>
                           <div className="prose prose-sm max-w-none text-slate-800">
-                            <ReactMarkdown>{msg.opinion}</ReactMarkdown>
+                            <ReactMarkdown>{chatOpinionText}</ReactMarkdown>
                           </div>
                         </div>
                       )}
 
-                      {msg.guideGraph && !msg.isDocAck && (msg.isAudit || msg.mode === 'audit' || msg.mode === 'plan') && (
-                        <GuideGraphTrail graph={msg.guideGraph} className="mb-4" />
-                      )}
+                      {msg.guideGraph &&
+                        !msg.isDocAck &&
+                        (msg.isAudit || msg.mode === 'audit' || msg.mode === 'plan') &&
+                        !isLatestMentorInsight && (
+                          <GuideGraphTrail graph={msg.guideGraph} className="mb-4" />
+                        )}
 
-                      {msg.mefScore && !msg.isDocAck && (
+                      {msg.mefScore && !msg.isDocAck && !isEarlyGuidePhase(msg) && (
                         <MefScoreCard score={msg.mefScore} className="mb-4 p-4 rounded-2xl border border-slate-200 bg-white" />
+                      )}
+                      {msg.mefScore &&
+                        !msg.isDocAck &&
+                        isEarlyGuidePhase(msg) &&
+                        !isLatestMentorInsight && (
+                        <p className="mb-3 text-[10px] text-slate-500 px-2 py-1.5 rounded-lg bg-slate-50 border border-slate-100">
+                          {t('mef.title')}: {msg.mefScore.document_only_index ?? 0}% · {t('guide.phase')}{' '}
+                          {msg.guidePhase || msg.guideGraph?.phase_name}
+                        </p>
                       )}
 
                       {!msg.isDocAck && (
@@ -504,7 +615,7 @@ const ChatInterface = ({
                         </div>
                       )}
 
-                      {msg.isAudit && msg.opinion && !msg.isDocAck && (msg.content?.includes('## Dictamen') || msg.fullContent?.includes('## Dictamen')) && (
+                      {msg.isAudit && msg.opinion && !msg.isDocAck && !isEarlyGuidePhase(msg) && (msg.content?.includes('## Dictamen') || msg.fullContent?.includes('## Dictamen')) && (
                         <details className="mt-4 group cedit-fade-in">
                           <summary className="cursor-pointer text-sm font-semibold text-slate-700 hover:text-blue-800 transition-colors list-none flex items-center gap-1">
                             <span className="material-symbols-outlined text-base group-open:rotate-90 transition-transform">chevron_right</span>
@@ -518,7 +629,7 @@ const ChatInterface = ({
                         </details>
                       )}
 
-                      {getFollowUpSection(msg.content, msg.fullContent) && (
+                      {getFollowUpSection(msg.content, msg.fullContent) && !isLatestMentorInsight && (
                         <div className={`mt-4 p-4 ${ceditCardClass('gray')} cedit-fade-in`}>
                           <div className="flex items-center gap-2 mb-2">
                             <div className={ceditIconBoxClass('blue', 'w-8 h-8')}>
@@ -552,41 +663,43 @@ const ChatInterface = ({
                       )}
                     </div>
 
-                      {shouldShowPdfButton(msg) && !msg.isDocAck && (
-                        <div className={`mt-2 p-5 text-center cedit-pdf-cta ${ceditCardClass('blue')}`}>
-                          <div className="flex justify-center mb-3">
-                            <div className={ceditIconBoxClass('blue', 'w-11 h-11')}>
-                              <span className="material-symbols-outlined text-white text-2xl">picture_as_pdf</span>
+                      {(msg.isAudit || msg.showPdf) && !msg.isDocAck && (canShowPdfOffer(msg).show || (!isEarlyGuidePhase(msg) && msg.mefScore)) && (
+                        <div className="mt-2 px-2">
+                          {canShowPdfOffer(msg).show ? (
+                            <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-xl border border-blue-200 bg-blue-50/80">
+                              <span className="material-symbols-outlined text-blue-800 text-lg">picture_as_pdf</span>
+                              <span className="text-[11px] font-semibold text-blue-900 flex-1 min-w-[120px]">
+                                {t('chat.pdfCompactHint')}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleGeneratePDF(msg, index)}
+                                disabled={generatingPdf === index || freemiumExceeded}
+                                className={`${ceditBtnPrimaryClass('blue')} !py-1.5 !px-3 !text-[11px] !rounded-lg`}
+                              >
+                                <span className="material-symbols-outlined text-sm">download</span>
+                                {generatingPdf === index ? t('chat.genPdfLoading') : t('chat.genPdf')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => startRefine(msg)}
+                                className={`${ceditBtnSecondaryClass()} !py-1.5 !px-2 !text-[10px]`}
+                              >
+                                {t('chat.refinePlan')}
+                              </button>
                             </div>
-                          </div>
-                          <p className={`text-xs font-bold uppercase mb-1 ${ceditLabelClass('blue').replace('flex items-center gap-1', '')}`}>
-                            {t('chat.mefDoc')}
-                          </p>
-                          <p className="text-[11px] text-slate-600 mb-4 max-w-md mx-auto">{t('chat.mefDocHint')}</p>
-                          <div className="flex flex-wrap gap-2 justify-center">
-                            <button
-                              type="button"
-                              onClick={() => handleGeneratePDF(msg, index)}
-                              disabled={generatingPdf === index || freemiumExceeded}
-                              className={`${ceditBtnPrimaryClass('blue')} cedit-pulse-btn min-w-[200px]`}
-                            >
-                              <span className="material-symbols-outlined text-sm">download</span>
-                              {generatingPdf === index ? t('chat.genPdfLoading') : t('chat.genPdf')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => startRefine(msg)}
-                              className={ceditBtnSecondaryClass()}
-                            >
-                              {t('chat.refinePlan')}
-                            </button>
-                          </div>
+                          ) : (
+                            <p className="text-[10px] text-slate-500 flex items-start gap-1.5 py-1.5 px-2 rounded-lg bg-slate-50 border border-slate-100">
+                              <span className="material-symbols-outlined text-[14px] text-slate-400 shrink-0">lock</span>
+                              <span>{getPdfLockReason(msg)}</span>
+                            </p>
+                          )}
                         </div>
                       )}
 
-                    {(msg.isAudit || messages[index - 1]?.isFile) && !msg.isDocAck && (
-                      <div className="mt-2 px-2 py-2 bg-slate-100 rounded-lg border border-slate-200 flex items-center gap-2 text-xs text-slate-600">
-                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    {shouldShowSyscoinBadge(msg) && (
+                      <div className="mt-2 px-2 py-2 bg-slate-50 rounded-lg border border-slate-200 flex items-center gap-2 text-xs text-slate-600">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
                         Syscoin: {blockchainHash || 'registro pendiente'}
                       </div>
                     )}
@@ -614,7 +727,8 @@ const ChatInterface = ({
                   </div>
                 )}
               </div>
-            ))
+            );
+            })
           )}
 
           {isLoading && (
@@ -629,9 +743,12 @@ const ChatInterface = ({
                     <div key={d} className="w-2 h-2 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: `${d}ms` }} />
                   ))}
                 </div>
-                <p className="text-sm text-slate-600">
-                  {sessionMode === 'audit' ? t('chat.reviewing') : t('chat.consulting')}
-                </p>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-slate-700 font-medium">{loadingStatusText}</p>
+                  <p className="text-[10px] text-slate-500 mt-1 animate-pulse">
+                    {sessionMode === 'audit' ? t('chat.reviewing') : t('chat.consulting')}
+                  </p>
+                </div>
               </div>
             </div>
           )}
