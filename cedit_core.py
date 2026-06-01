@@ -1180,6 +1180,24 @@ def run_chat(
     contexto = "\n\n".join([d.page_content for d in docs])
 
     prefix_instructions = cedit_identity_instruction(history, message, locale)
+    if (canal or "").lower() == "whatsapp":
+        prefix_instructions += (
+            "\nCANAL WHATSAPP: mensajes CORTOS (máx. 3 bloques ##). "
+            "Sin listas numeradas largas. Sin '¿Te gustaría profundizar…?'. "
+            "Prioriza guía fluida en móvil.\n"
+        )
+    if (canal or "").lower() == "telegram":
+        prefix_instructions += (
+            "\nCANAL TELEGRAM: mensajes CORTOS (máx. 3 bloques ##). "
+            "Sin listas numeradas largas. Sin '¿Te gustaría profundizar…?'. "
+            "Prioriza guía fluida en móvil, como WhatsApp.\n"
+        )
+    if (canal or "").lower() == "discord":
+        prefix_instructions += (
+            "\nCANAL DISCORD: una sola respuesta cohesiva. "
+            "No repitas saludos, resúmenes del turno anterior ni la misma idea dos veces. "
+            "Ve directo a validar, orientar o preguntar (máx. 1–2 preguntas).\n"
+        )
     guide_state = None
     if mode in ("audit", "plan"):
         guide_state = assess_guide_state(message, history, has_pdf=False)
@@ -1199,9 +1217,10 @@ def run_chat(
         f"[MENSAJE DEL USUARIO]\n{message}\n[Canal: {canal}]"
     )
 
+    history_limit = 12 if (canal or "").lower() == "discord" else 6
     messages = prompt.format_messages(
         context=contexto,
-        chat_history=_format_history(history),
+        chat_history=_format_history(history, limit=history_limit),
         input=formatted_input,
     )
     respuesta = llm.invoke(messages)

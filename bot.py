@@ -1,12 +1,13 @@
 """
-Bot Discord CEDIT — embeds, botones, freemium por conversación, Plan Pro.
+Bot Discord CEDIT — mentor fluido, slash commands, PDF ≥80%, métricas.
 """
 import io
+import inspect
 import sys
+import os
 from datetime import datetime
 from pathlib import Path
 
-# Consola Windows: evitar UnicodeEncodeError con emojis
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -16,7 +17,6 @@ if hasattr(sys.stdout, "reconfigure"):
 import discord
 from discord import app_commands
 from discord.ext import commands
-import os
 from dotenv import load_dotenv
 
 from cedit_core import (
@@ -28,6 +28,7 @@ from cedit_core import (
     detect_input_mode,
     consumes_freemium_credit,
 )
+from discord_mentor import is_mentor_mode, pdf_lock_reason, mentor_chat_body
 from discord_session import get_session, activate_pro_user, get_pro_settings
 from discord_ui import (
     welcome_embed,
@@ -36,11 +37,12 @@ from discord_ui import (
     response_embed,
     freemium_blocked_embed,
     pro_welcome_embed,
-    thinking_embed,
     peru_embed,
-    document_received_embed,
+    mentor_opinion_embed,
+    mentor_panel_embed,
+    metrics_embed,
     MainMenuView,
-    PlanActionView,
+    MentorActionView,
     ResetMemoryConfirmView,
 )
 
@@ -50,6 +52,8 @@ ROOT_DIR = Path(__file__).resolve().parent
 AVATAR_FILE = ROOT_DIR / "assets" / "cedit-discord-avatar.png"
 PROFILE_MARKER = ROOT_DIR / ".cedit_profile_synced"
 BOT_DISPLAY_NAME = os.getenv("DISCORD_BOT_NAME", "CEDIT - Agent")
+MSG_LOCK_DIR = ROOT_DIR / ".discord_msg_locks"
+_inflight_messages: set[int] = set()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -60,7 +64,46 @@ def _is_dm(channel) -> bool:
     return isinstance(channel, discord.DMChannel)
 
 
-async def _channel_send(target, *, embed=None, view=None, file=None):
+def _conv_key(channel_id: int, user_id: int, is_dm: bool) -> tuple:
+    return (channel_id, user_id, is_dm)
+
+
+def _claim_message(message_id: int) -> bool:
+    """Evita procesar el mismo mensaje dos veces (reintentos o dos instancias del bot)."""
+    if message_id in _inflight_messages:
+        return False
+    _inflight_messages.add(message_id)
+    MSG_LOCK_DIR.mkdir(exist_ok=True)
+    lock_path = MSG_LOCK_DIR / f"{message_id}.lock"
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        return True
+    except FileExistsError:
+        _inflight_messages.discard(message_id)
+        return False
+
+
+def _release_message(message_id: int) -> None:
+    _inflight_messages.discard(message_id)
+    lock_path = MSG_LOCK_DIR / f"{message_id}.lock"
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+async def _post_response(
+    target,
+    *,
+    embed=None,
+    view=None,
+    file=None,
+    reply_to: discord.Message | None = None,
+):
+    """Exactamente un mensaje de salida."""
+    if reply_to is not None:
+        return await reply_to.reply(embed=embed, view=view, file=file, mention_author=False)
     if isinstance(target, discord.Interaction):
         return await target.followup.send(embed=embed, view=view, file=file)
     return await target.send(embed=embed, view=view, file=file)
@@ -74,54 +117,116 @@ def _requester(target, requested_by: discord.User | None = None) -> discord.User
     return None
 
 
+def _notify_session_events(sess) -> str:
+    """Texto para anteponer al único mensaje de respuesta (p. ej. aviso 24 h)."""
+    if sess.auto_reset_notice:
+        sess.auto_reset_notice = False
+        return (
+            "⏱️ Pasaron **24 horas** sin actividad (plan gratuito). "
+            "Reinicié su memoria — cuénteme de nuevo su proyecto.\n\n"
+        )
+    return ""
+
+
+async def _as_text(value) -> str:
+    """Evita pasar coroutines sin await a embeds (.strip())."""
+    if inspect.iscoroutine(value):
+        value = await value
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
+def _assistant_history_content(result: dict) -> str:
+    """Guarda en historial solo la parte conversacional (sin duplicar panel/checklist)."""
+    mode = result.get("input_mode") or result.get("mode", "chat")
+    if is_mentor_mode(result.get("mode", ""), mode):
+        body = mentor_chat_body(result)
+        if body and body != "—":
+            return body
+    return result.get("display") or result.get("response", "")
+
+
+def _apply_result_to_session(sess, result: dict, user_text: str = "") -> None:
+    mode = result.get("input_mode") or result.get("mode", "chat")
+    if result.get("consumes_audit_credit"):
+        sess.increment_audit(mode if mode in ("audit", "plan") else "audit")
+        sess.mode = mode if mode in ("audit", "plan") else sess.mode
+    elif is_mentor_mode(result.get("mode", ""), mode):
+        sess.mode = mode
+
+    if is_mentor_mode(result.get("mode", ""), mode):
+        sess.set_mentor_result(result)
+        if result.get("response") or result.get("opinion"):
+            sess.set_plan(
+                result.get("response", ""),
+                opinion=result.get("opinion", ""),
+                dictamen=result.get("dictamen", ""),
+            )
+
+
 async def send_bot_response(
     target,
     result: dict,
     sess,
     *,
-    thinking_msg: discord.Message | None = None,
     requested_by: discord.User | None = None,
     query_preview: str = "",
     queried_at: datetime | None = None,
+    channel_id: int = 0,
+    is_dm: bool = False,
+    lead_note: str = "",
+    pdf_filename: str = "",
+    pdf_pages: int = 0,
+    reply_to: discord.Message | None = None,
 ):
-    """Envía embed de respuesta + barra de auditoría + botones."""
+    lead_note = await _as_text(lead_note)
     user = _requester(target, requested_by)
-    when = queried_at or datetime.now()
-    mode = result.get("mode", sess.mode)
-    sess.mode = mode
+    mode = result.get("input_mode") or result.get("mode", sess.mode)
     usage = sess.usage()
+    mentor = is_mentor_mode(result.get("mode", ""), mode)
+
+    key = _conv_key(channel_id or getattr(getattr(target, "channel", None), "id", 0), user.id if user else 0, is_dm)
+    action_view = MentorActionView(
+        key,
+        show_pdf=bool(result.get("show_pdf")),
+        has_plan=bool(sess.get_plan()),
+    )
+
+    if mentor and (result.get("opinion") or result.get("guide_graph") or result.get("response")):
+        main = mentor_opinion_embed(
+            result,
+            requested_by=user,
+            lead_note=lead_note,
+            pdf_filename=pdf_filename or result.get("filename", ""),
+            pdf_pages=pdf_pages,
+        )
+        await _post_response(
+            target, embed=main, view=action_view, reply_to=reply_to,
+        )
+        return
 
     body = result.get("display") or result.get("response", "")
+    if lead_note:
+        body = f"{lead_note.strip()}\n\n{body}"
     main = response_embed(
         body,
-        mode=mode,
+        mode=result.get("mode", "chat"),
         usage=usage,
-        filename=result.get("filename"),
+        filename=result.get("filename") or pdf_filename or None,
         opinion=result.get("opinion"),
         strengths=result.get("strengths"),
         requested_by=user,
     )
-
-    view = PlanActionView(show_pdf=result.get("show_pdf", False)) if result.get("show_pdf") else None
-
-    if thinking_msg:
-        try:
-            await thinking_msg.delete()
-        except discord.HTTPException:
-            pass
-
-    await _channel_send(target, embed=main, view=view)
-
-    if mode in ("audit", "plan"):
-        bar = audit_bar_embed(usage, mode, requested_by=user)
-        await _channel_send(target, embed=bar, view=MainMenuView())
-        if result.get("guide_graph"):
-            trail = guide_graph_embed(result["guide_graph"], requested_by=user)
-            await _channel_send(target, embed=trail)
+    await _post_response(
+        target,
+        embed=main,
+        view=MainMenuView() if not mentor else action_view,
+        reply_to=reply_to,
+    )
 
 
 async def _apply_discord_profile():
-    """Nombre visible + avatar institucional (CEDIT_FORCE_AVATAR=1 para repetir)."""
     if PROFILE_MARKER.exists() and os.getenv("CEDIT_FORCE_AVATAR") != "1":
         return
     kwargs = {"username": BOT_DISPLAY_NAME}
@@ -145,7 +250,7 @@ async def on_ready():
         )
     )
     await _apply_discord_profile()
-    print(f"[CEDIT] {bot.user} ({bot.user.global_name or bot.user.name}) conectado")
+    print(f"[CEDIT] {bot.user} conectado")
     try:
         synced = await bot.tree.sync()
         print(f"[CEDIT] Slash commands: {len(synced)}")
@@ -156,7 +261,7 @@ async def on_ready():
 @bot.tree.command(name="reiniciar_memoria", description="Borra el contexto de ESTA conversación y recupera auditorías gratis")
 async def slash_reiniciar(interaction: discord.Interaction):
     is_dm = _is_dm(interaction.channel)
-    key = (interaction.channel_id, interaction.user.id, is_dm)
+    key = _conv_key(interaction.channel_id, interaction.user.id, is_dm)
     await interaction.response.send_message(
         embed=peru_embed(
             "**¿Reiniciar memoria?**\n\n"
@@ -194,6 +299,34 @@ async def slash_ayuda(interaction: discord.Interaction):
     )
 
 
+@bot.tree.command(name="ciudadano", description="Orientación para ciudadanos — derechos y trámites")
+async def slash_ciudadano(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        embed=peru_embed(
+            "**Modo ciudadano(a)**\n\n"
+            "Escriba por ejemplo:\n"
+            "`! ¿Qué derechos tengo ante el silencio administrativo?`\n\n"
+            "Le explico trámites y normativa del Estado en palabras sencillas.",
+            requested_by=interaction.user,
+        ),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="servidor", description="Orientación para servidores públicos — MEF e Invierte.pe")
+async def slash_servidor(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        embed=peru_embed(
+            "**Modo servidor(a) público(a)**\n\n"
+            "Adjunte un **PDF** o escriba:\n"
+            "`! Necesito auditar mi plan para Invierte.pe y el MEF`\n\n"
+            "También puede usar **`/auditar`** con su consulta.",
+            requested_by=interaction.user,
+        ),
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(name="uso", description="Barra de auditoría de esta conversación")
 async def slash_uso(interaction: discord.Interaction):
     sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
@@ -203,53 +336,103 @@ async def slash_uso(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="auditar", description="Auditar plan o expediente (texto)")
-@app_commands.describe(consulta="Describe tu plan o expediente")
-async def slash_auditar(interaction: discord.Interaction, consulta: str):
-    queried_at = datetime.now()
-    await interaction.response.defer(thinking=True)
+@bot.tree.command(name="metricas", description="Fase del mentor, índice MEF, riesgo y avance del plan")
+async def slash_metricas(interaction: discord.Interaction):
     sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
+    mentor = sess.get_mentor_result()
+    if not mentor:
+        await interaction.response.send_message(
+            embed=peru_embed(
+                "Aún no hay métricas. Escriba **`!`** + su idea o adjunte un **PDF** "
+                "y el mentor irá mostrando fase, índice y riesgo.",
+                requested_by=interaction.user,
+                title="📊 Mis métricas",
+            ),
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message(
+        embed=metrics_embed(mentor, sess.usage(), requested_by=interaction.user),
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="expediente", description="Ver avance del expediente y checklist del mentor")
+async def slash_expediente(interaction: discord.Interaction):
+    sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
+    mentor = sess.get_mentor_result()
+    if not mentor:
+        await interaction.response.send_message(
+            embed=peru_embed("Sin expediente aún. Cuente su proyecto al mentor.", requested_by=interaction.user),
+            ephemeral=True,
+        )
+        return
+    panel = mentor_panel_embed(mentor, requested_by=interaction.user)
+    trail = guide_graph_embed(mentor.get("guide_graph") or {}, requested_by=interaction.user)
+    if panel and trail:
+        merged = panel
+        merged.description = f"{panel.description or ''}\n\n---\n\n{trail.description or ''}"[:4096]
+        await interaction.response.send_message(embed=merged, ephemeral=True)
+    elif panel:
+        await interaction.response.send_message(embed=panel, ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=trail, ephemeral=True)
+
+
+@bot.tree.command(name="auditar", description="Guiar o auditar plan / expediente (texto)")
+@app_commands.describe(consulta="Describe tu plan, idea o expediente")
+async def slash_auditar(interaction: discord.Interaction, consulta: str):
+    await interaction.response.defer(thinking=True)
+    is_dm = _is_dm(interaction.channel)
+    sess = get_session(interaction.channel_id, interaction.user.id, is_dm)
+    lead_note = await _as_text(_notify_session_events(sess))
     try:
         sess.check_freemium("audit")
+        active = sess.mode if sess.mode in ("audit", "plan") else None
         result = run_chat(
             consulta,
             history=sess.history,
             user_id=f"discord_{interaction.user.id}",
             canal="discord",
             skip_usage=True,
+            session_mode=active,
         )
         sess.append("user", consulta)
-        sess.append("assistant", result.get("display") or result["response"])
-        if result.get("consumes_audit_credit"):
-            sess.increment_audit("audit")
-        if result.get("show_pdf"):
-            sess.set_plan(
-                result["response"],
-                opinion=result.get("opinion", ""),
-                dictamen=result.get("dictamen", ""),
-            )
+        sess.append("assistant", _assistant_history_content(result))
+        _apply_result_to_session(sess, result)
         await send_bot_response(
             interaction, result, sess,
             requested_by=interaction.user,
             query_preview=consulta,
-            queried_at=queried_at,
+            channel_id=interaction.channel_id,
+            is_dm=is_dm,
+            lead_note=lead_note,
         )
     except FreemiumLimitError:
         await interaction.followup.send(
             embed=freemium_blocked_embed(interaction.user),
-            view=ResetMemoryConfirmView((interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))),
+            view=ResetMemoryConfirmView(_conv_key(interaction.channel_id, interaction.user.id, is_dm)),
         )
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
 
 
-@bot.tree.command(name="plan", description="Generar PDF técnico MEF del último análisis")
+@bot.tree.command(name="plan", description="Generar PDF técnico MEF (solo si métricas ≥80%)")
 async def slash_plan(interaction: discord.Interaction):
-    sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
+    is_dm = _is_dm(interaction.channel)
+    sess = get_session(interaction.channel_id, interaction.user.id, is_dm)
+    mentor = sess.get_mentor_result()
+    if mentor and not mentor.get("show_pdf"):
+        reason = pdf_lock_reason(mentor)
+        await interaction.response.send_message(
+            embed=peru_embed(f"🔒 **PDF no disponible aún**\n\n{reason}", requested_by=interaction.user),
+            ephemeral=True,
+        )
+        return
     content = sess.get_plan()
     if not content:
         await interaction.response.send_message(
-            "Primero audita un plan (PDF o `/auditar`).", ephemeral=True
+            "Primero guíe su plan con el mentor (`!` + texto o `/auditar`).", ephemeral=True
         )
         return
     await interaction.response.defer(thinking=True)
@@ -268,13 +451,11 @@ async def slash_plan(interaction: discord.Interaction):
             source_document=meta.get("source_excerpt", ""),
         )
         sess.increment_audit("plan")
-        pdf_ok = peru_embed(
-            f"**Buen día.**\n\nSu **plan técnico oficial MEF** ha sido generado.\n\n"
-            f"🔗 Trazabilidad: `{doc_hash}`",
-            requested_by=interaction.user,
-        )
         await interaction.followup.send(
-            embed=pdf_ok,
+            embed=peru_embed(
+                f"**Plan técnico oficial MEF** generado.\n\n🔗 `{doc_hash}`",
+                requested_by=interaction.user,
+            ),
             file=discord.File(io.BytesIO(pdf_bytes), filename=filename),
         )
         await interaction.followup.send(
@@ -283,7 +464,7 @@ async def slash_plan(interaction: discord.Interaction):
     except FreemiumLimitError:
         await interaction.followup.send(
             embed=freemium_blocked_embed(interaction.user),
-            view=ResetMemoryConfirmView((interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))),
+            view=ResetMemoryConfirmView(_conv_key(interaction.channel_id, interaction.user.id, is_dm)),
         )
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
@@ -292,13 +473,13 @@ async def slash_plan(interaction: discord.Interaction):
 @bot.tree.command(name="corregir", description="Corregir el último plan según tus indicaciones")
 @app_commands.describe(solicitud="Cambios que necesitas")
 async def slash_corregir(interaction: discord.Interaction, solicitud: str):
-    queried_at = datetime.now()
     sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
     original = sess.get_plan()
     if not original:
         await interaction.response.send_message("No hay plan previo en esta conversación.", ephemeral=True)
         return
     await interaction.response.defer(thinking=True)
+    is_dm = _is_dm(interaction.channel)
     try:
         sess.check_freemium("plan")
         result = run_refine_plan(
@@ -309,162 +490,145 @@ async def slash_corregir(interaction: discord.Interaction, solicitud: str):
             skip_usage=True,
         )
         sess.append("user", f"Corrección: {solicitud}")
-        sess.append("assistant", result.get("display") or result["response"])
+        sess.append("assistant", _assistant_history_content(result))
+        _apply_result_to_session(sess, result)
         sess.set_plan(result["response"])
-        sess.increment_audit("plan")
+        if not result.get("consumes_audit_credit"):
+            sess.increment_audit("plan")
         await send_bot_response(
             interaction, result, sess,
             requested_by=interaction.user,
             query_preview=solicitud,
-            queried_at=queried_at,
+            channel_id=interaction.channel_id,
+            is_dm=is_dm,
         )
     except FreemiumLimitError:
         await interaction.followup.send(
             embed=freemium_blocked_embed(interaction.user),
-            view=ResetMemoryConfirmView((interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))),
+            view=ResetMemoryConfirmView(_conv_key(interaction.channel_id, interaction.user.id, is_dm)),
         )
     except Exception as e:
         await interaction.followup.send(f"Error: {e}")
 
 
 async def process_user_message(message: discord.Message, text: str):
-    is_dm = _is_dm(message.channel)
-    sess = get_session(message.channel.id, message.author.id, is_dm)
-
-    if text.lower() in ("ayuda", "help", "menu", "inicio"):
-        await message.channel.send(
-            embed=welcome_embed(message.author), view=MainMenuView()
-        )
+    if not _claim_message(message.id):
         return
+    try:
+        is_dm = _is_dm(message.channel)
+        sess = get_session(message.channel.id, message.author.id, is_dm)
+        lead_note = await _as_text(_notify_session_events(sess))
 
-    pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
-    if pdf_attachments:
-        queried_at = datetime.now()
-        thinking = await message.channel.send(
-            embed=thinking_embed("Analizando su expediente PDF ante el MEF…")
-        )
-        try:
-            att = pdf_attachments[0]
-            data = await att.read()
-            mode = "audit"
-            sess.check_freemium(mode)
-            from cedit_core import get_pdf_document_stats
+        if text.lower() in ("ayuda", "help", "menu", "inicio", "metricas", "métricas"):
+            if text.lower() in ("metricas", "métricas"):
+                mentor = sess.get_mentor_result()
+                if mentor:
+                    await message.reply(
+                        embed=metrics_embed(mentor, sess.usage(), requested_by=message.author),
+                        mention_author=False,
+                    )
+                else:
+                    await message.reply(
+                        embed=peru_embed("Aún no hay métricas. Cuente su idea al mentor.", requested_by=message.author),
+                        mention_author=False,
+                    )
+                return
+            await message.reply(embed=welcome_embed(message.author), view=MainMenuView(), mention_author=False)
+            return
 
+        pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
+        if pdf_attachments:
             try:
-                _, pages, chars = get_pdf_document_stats(data)
-            except ValueError:
-                pages, chars = 0, 0
-            recv = document_received_embed(
-                att.filename, pages, chars, requested_by=message.author
+                att = pdf_attachments[0]
+                data = await att.read()
+                sess.check_freemium("audit")
+                from cedit_core import get_pdf_document_stats
+
+                try:
+                    _, pages, _chars = get_pdf_document_stats(data)
+                except ValueError:
+                    pages = 0
+                async with message.channel.typing():
+                    result = run_audit_pdf(
+                        data,
+                        att.filename,
+                        user_text=text,
+                        user_id=f"discord_{message.author.id}",
+                        canal="discord",
+                        skip_usage=True,
+                    )
+                sess.mode = "audit"
+                sess.append("user", f"PDF: {att.filename}" + (f"\n{text}" if text else ""))
+                sess.append("assistant", _assistant_history_content(result))
+                _apply_result_to_session(sess, result)
+                sess.set_plan(
+                    result["response"],
+                    att.filename,
+                    opinion=result.get("opinion", ""),
+                    dictamen=result.get("dictamen", ""),
+                    source_excerpt=result.get("source_excerpt", ""),
+                )
+                await send_bot_response(
+                    message.channel, result, sess,
+                    requested_by=message.author,
+                    channel_id=message.channel.id,
+                    is_dm=is_dm,
+                    lead_note=lead_note,
+                    pdf_filename=att.filename,
+                    pdf_pages=pages,
+                    reply_to=message,
+                )
+            except FreemiumLimitError:
+                await message.reply(
+                    embed=freemium_blocked_embed(message.author),
+                    view=ResetMemoryConfirmView(_conv_key(message.channel.id, message.author.id, is_dm)),
+                    mention_author=False,
+                )
+            except Exception as e:
+                await message.reply(f"Error al auditar: {e}", mention_author=False)
+            return
+
+        if not text:
+            return
+
+        async with message.channel.typing():
+            active_mode = sess.mode if sess.mode in ("audit", "plan") else None
+            mode = detect_input_mode(text)
+            billable = consumes_freemium_credit(
+                text, mode=mode, session_mode=active_mode, history=sess.history
             )
-            try:
-                await thinking.delete()
-            except discord.HTTPException:
-                pass
-            await message.channel.send(embed=recv)
-            thinking = await message.channel.send(
-                embed=thinking_embed("Revisando expediente ante normativa MEF…")
-            )
-            result = run_audit_pdf(
-                data,
-                att.filename,
-                user_text=text,
+            if billable:
+                sess.check_freemium("audit")
+            result = run_chat(
+                text,
+                history=sess.history,
                 user_id=f"discord_{message.author.id}",
                 canal="discord",
                 skip_usage=True,
+                session_mode=active_mode,
             )
-            sess.mode = "audit"
-            sess.append("user", f"PDF: {att.filename}" + (f"\n{text}" if text else ""))
-            sess.append("assistant", result.get("display") or result["response"])
-            if result.get("consumes_audit_credit"):
-                sess.increment_audit("audit")
-            sess.set_plan(
-                result["response"],
-                att.filename,
-                opinion=result.get("opinion", ""),
-                dictamen=result.get("dictamen", ""),
-                source_excerpt=result.get("source_excerpt", ""),
-            )
-            preview = f"PDF: {att.filename}" + (f" — {text}" if text else "")
-            await send_bot_response(
-                message.channel, result, sess,
-                thinking_msg=thinking,
-                requested_by=message.author,
-                query_preview=preview,
-                queried_at=queried_at,
-            )
-        except FreemiumLimitError:
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
-            await message.channel.send(
-                embed=freemium_blocked_embed(message.author),
-                view=ResetMemoryConfirmView((message.channel.id, message.author.id, is_dm)),
-            )
-        except Exception as e:
-            try:
-                await thinking.delete()
-            except Exception:
-                pass
-            await message.channel.send(f"Error al auditar: {e}")
-        return
-
-    if not text:
-        return
-
-    queried_at = datetime.now()
-    thinking = await message.channel.send(embed=thinking_embed("Consultando normativa vigente…"))
-    try:
-        active_mode = sess.mode if sess.mode in ("audit", "plan") else None
-        mode = detect_input_mode(text)
-        billable = consumes_freemium_credit(
-            text, mode=mode, session_mode=active_mode, history=sess.history
-        )
-        if billable:
-            sess.check_freemium("audit")
-        result = run_chat(
-            text,
-            history=sess.history,
-            user_id=f"discord_{message.author.id}",
-            canal="discord",
-            skip_usage=True,
-            session_mode=active_mode,
-        )
         sess.append("user", text)
-        sess.append("assistant", result.get("display") or result["response"])
-        if result.get("consumes_audit_credit"):
-            bill_mode = result.get("input_mode") or "audit"
-            sess.increment_audit(bill_mode)
-            sess.mode = bill_mode
-        if result.get("show_pdf"):
-            sess.set_plan(
-                result["response"],
-                opinion=result.get("opinion", ""),
-                dictamen=result.get("dictamen", ""),
-            )
+        sess.append("assistant", _assistant_history_content(result))
+        _apply_result_to_session(sess, result)
         await send_bot_response(
             message.channel, result, sess,
-            thinking_msg=thinking,
             requested_by=message.author,
             query_preview=text,
-            queried_at=queried_at,
+            channel_id=message.channel.id,
+            is_dm=is_dm,
+            lead_note=lead_note,
+            reply_to=message,
         )
     except FreemiumLimitError:
-        try:
-            await thinking.delete()
-        except Exception:
-            pass
-        await message.channel.send(
+        await message.reply(
             embed=freemium_blocked_embed(message.author),
-            view=ResetMemoryConfirmView((message.channel.id, message.author.id, is_dm)),
+            view=ResetMemoryConfirmView(_conv_key(message.channel.id, message.author.id, _is_dm(message.channel))),
+            mention_author=False,
         )
     except Exception as e:
-        try:
-            await thinking.delete()
-        except Exception:
-            pass
-        await message.channel.send(f"Error: {e}")
+        await message.reply(f"Error: {e}", mention_author=False)
+    finally:
+        _release_message(message.id)
 
 
 @bot.event
@@ -480,35 +644,17 @@ async def on_message(message: discord.Message):
         raw = raw.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
     raw = raw.strip()
 
-    # !consulta — como en el embed de bienvenida
     if raw.startswith("!"):
         query = raw[1:].strip()
         if not query and not message.attachments:
-            await message.channel.send(
-                embed=welcome_embed(message.author), view=MainMenuView()
-            )
-            await bot.process_commands(message)
+            await message.reply(embed=welcome_embed(message.author), view=MainMenuView(), mention_author=False)
             return
         await process_user_message(message, query)
-        await bot.process_commands(message)
         return
 
     if bot_mentioned or is_dm or message.attachments:
         await process_user_message(message, raw)
-        await bot.process_commands(message)
         return
-
-    await bot.process_commands(message)
-
-
-@bot.command(name="ayuda")
-async def cmd_ayuda(ctx):
-    await ctx.send(embed=welcome_embed(ctx.author), view=MainMenuView())
-
-
-@bot.command(name="pregunta")
-async def cmd_pregunta(ctx, *, pregunta: str):
-    await process_user_message(ctx.message, pregunta)
 
 
 if TOKEN:

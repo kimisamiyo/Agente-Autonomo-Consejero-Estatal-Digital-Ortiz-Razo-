@@ -38,6 +38,7 @@ echo    [1] API Backend    http://127.0.0.1:8000
 echo    [2] Web Frontend   http://127.0.0.1:5173
 echo    [3] Bot Discord    bot.py
 echo    [4] n8n            http://127.0.0.1:5678
+echo    [5] Telegram       telegram_bot.py (opcional, ver scripts\5-CEDIT-Telegram.bat)
 echo.
 echo  Espere ~30-60 s en Discord hasta ver: connected to Gateway
 echo  n8n: importe flujos CEDIT-02 y CEDIT-01 y Active (verde)
@@ -69,6 +70,7 @@ if errorlevel 1 (
 
 echo.
 echo  Cuatro ventanas abiertas (titulos 1- a 4-).
+echo  Telegram (opcional): scripts\5-CEDIT-Telegram.bat
 echo  Abra el chat: http://127.0.0.1:5173
 echo  Docs API:     http://127.0.0.1:8000/docs
 echo.

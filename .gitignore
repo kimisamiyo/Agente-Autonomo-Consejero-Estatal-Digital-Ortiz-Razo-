@@ -15,9 +15,19 @@ __pycache__/
 *.pyd
 .pytest_cache/
 
-# Environment variables
+# Environment variables (secretos — no subir a Git)
 .env
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+
+# Estado local / sesiones (pueden contener datos de usuario)
 .cedit_usage.json
+.cedit_telegram_sessions.json
+.cedit_whatsapp_sessions.json
+.discord_msg_locks/
 .cedit_avatar_synced
 .cedit_profile_synced
 .cedit_discord_sessions.json

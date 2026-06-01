@@ -3,12 +3,15 @@ Sesiones Discord: historial, modo, freemium por conversación y plan Pro.
 """
 import json
 import os
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
 from cedit_core import FREE_LIMIT, FreemiumLimitError
 
 SESSIONS_FILE = os.path.join(os.path.dirname(__file__), ".cedit_discord_sessions.json")
 PRO_USERS_FILE = os.path.join(os.path.dirname(__file__), ".cedit_pro_users.json")
+FREE_SESSION_TTL_HOURS = 24
+DISCORD_HISTORY_TURNS = 24
 
 
 def conversation_id(channel_id: int, user_id: int, is_dm: bool) -> str:
@@ -33,6 +36,33 @@ def _save_json(path: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value: str) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (TypeError, ValueError):
+        return None
+
+
+def _default_blob(user_id: int, is_pro: bool) -> dict:
+    return {
+        "history": [],
+        "audit_count": 0,
+        "mode": "chat",
+        "last_plan": "",
+        "filename": "",
+        "owner_user_id": user_id,
+        "last_activity_at": _utc_now_iso(),
+        "persist": is_pro,
+    }
+
+
 def is_pro_user(user_id: int) -> bool:
     return bool(_load_json(PRO_USERS_FILE).get(str(user_id), {}).get("active"))
 
@@ -52,11 +82,35 @@ class ConversationSession:
         self.conv_id = conv_id
         self.user_id = user_id
         self.is_pro = is_pro
+        self.auto_reset_notice = False
         self._store = _load_json(SESSIONS_FILE)
-        self._blob = self._store.setdefault(
-            conv_id,
-            {"history": [], "audit_count": 0, "mode": "chat", "last_plan": "", "filename": "", "persist": is_pro},
-        )
+        if conv_id not in self._store:
+            self._store[conv_id] = _default_blob(user_id, is_pro)
+        self._blob = self._store[conv_id]
+        self._blob.setdefault("owner_user_id", user_id)
+        self._apply_ttl_if_needed()
+
+    def _apply_ttl_if_needed(self) -> None:
+        if self.is_pro:
+            return
+        last = self._blob.get("last_activity_at")
+        if not last:
+            self.touch()
+            return
+        parsed = _parse_iso(last)
+        if not parsed:
+            self.touch()
+            return
+        if datetime.now(timezone.utc) - parsed >= timedelta(hours=FREE_SESSION_TTL_HOURS):
+            self._hard_reset(auto=True)
+
+    def touch(self) -> None:
+        self._blob["last_activity_at"] = _utc_now_iso()
+        self.save()
+
+    @property
+    def owner_user_id(self) -> int:
+        return int(self._blob.get("owner_user_id", self.user_id))
 
     @property
     def history(self) -> List[Dict]:
@@ -73,9 +127,25 @@ class ConversationSession:
 
     def append(self, role: str, content: str) -> None:
         self.history.append({"role": role, "content": content})
-        if len(self.history) > 16:
-            self._blob["history"] = self.history[-16:]
+        if len(self.history) > DISCORD_HISTORY_TURNS:
+            self._blob["history"] = self.history[-DISCORD_HISTORY_TURNS:]
+        self.touch()
+
+    def set_mentor_result(self, result: dict) -> None:
+        self._blob["last_mentor"] = {
+            "guide_graph": result.get("guide_graph"),
+            "mef_score": result.get("mef_score"),
+            "guide_phase": result.get("guide_phase"),
+            "guide_completeness": result.get("guide_completeness"),
+            "show_pdf": bool(result.get("show_pdf")),
+            "mode": result.get("input_mode") or result.get("mode"),
+            "opinion": result.get("opinion", ""),
+            "response": result.get("response", ""),
+        }
         self.save()
+
+    def get_mentor_result(self) -> dict:
+        return self._blob.get("last_mentor") or {}
 
     def set_plan(
         self,
@@ -135,19 +205,21 @@ class ConversationSession:
         if self.is_pro or mode not in ("audit", "plan"):
             return self.usage()
         self._blob["audit_count"] = int(self._blob.get("audit_count", 0)) + 1
-        self.save()
+        self.touch()
         return self.usage()
 
-    def reset(self) -> None:
-        pro = get_pro_settings(self.user_id)
-        if self.is_pro and pro.get("persist_context", True):
-            self._blob["history"] = []
-            self._blob["audit_count"] = 0
-            self._blob["mode"] = "chat"
-            self.save()
-        else:
-            self._store.pop(self.conv_id, None)
-            _save_json(SESSIONS_FILE, self._store)
+    def _hard_reset(self, *, auto: bool = False, voluntary: bool = False) -> None:
+        self._store.pop(self.conv_id, None)
+        _save_json(SESSIONS_FILE, self._store)
+        self._store = _load_json(SESSIONS_FILE)
+        self._blob = self._store.setdefault(self.conv_id, _default_blob(self.user_id, self.is_pro))
+        self.touch()
+        if auto:
+            self.auto_reset_notice = True
+
+    def reset(self, *, voluntary: bool = False) -> None:
+        """Borrado total: contexto limpio y cupo renovado (freemium)."""
+        self._hard_reset(auto=False, voluntary=voluntary)
 
     def save(self) -> None:
         _save_json(SESSIONS_FILE, self._store)

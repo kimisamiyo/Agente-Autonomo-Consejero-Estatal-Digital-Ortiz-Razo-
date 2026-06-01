@@ -1,0 +1,16 @@
+# Despliegue opcional en Render — WhatsApp sin túnel en tu PC
+# https://render.com → New Blueprint o Web Service
+services:
+  - type: web
+    name: cedit-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/whatsapp/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      # Añada en el panel de Render (Secret Files / Environment):
+      # WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_VERIFY_TOKEN,
+      # WHATSAPP_API_VERSION, PINECONE_API_KEY, OPENAI_API_KEY, etc.

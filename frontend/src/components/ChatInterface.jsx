@@ -10,6 +10,7 @@ import { canShowPdfOffer, isEarlyGuidePhase, shouldShowSyscoinBadge } from '../u
 import { getMentorLoadingLabel } from '../utils/mentorActivity';
 import { isAuditSession } from '../utils/auditDecisionPoints';
 import PdfLanguageModal from './PdfLanguageModal';
+import NetworksLinks from './NetworksLinks';
 import { saveExpediente } from '../utils/expedientesStore';
 import { useI18n } from '../i18n/I18nContext';
 import {
@@ -490,6 +491,9 @@ const ChatInterface = ({
                     <p className="text-sm text-slate-600 pl-10">{card.d}</p>
                   </button>
                 ))}
+              </div>
+              <div className="mt-10 w-full max-w-2xl">
+                <NetworksLinks layout="compact" />
               </div>
             </div>
           ) : (

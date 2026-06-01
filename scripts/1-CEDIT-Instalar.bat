@@ -57,7 +57,7 @@ echo  (La primera vez puede tardar 5-15 minutos)
 echo.
 
 "%PIP%" install ^
-  discord.py python-dotenv pypdf fpdf2 ^
+  discord.py python-telegram-bot python-dotenv pypdf fpdf2 ^
   langchain-groq langchain-huggingface langchain-pinecone langchain-core ^
   fastapi uvicorn python-multipart httpx requests ^
   sentence-transformers

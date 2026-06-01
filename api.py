@@ -1,7 +1,15 @@
 import io
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
+import logging
+import threading
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Request, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -20,6 +28,7 @@ from premium_store import register_wallet, connect_wallet, lookup_wallet, is_pro
 from mef_news_automation import sync_mef_news, get_latest_snapshot, MEF_NEWS_LIST_URL
 
 app = FastAPI(title="API Consejero Estatal Digital")
+log = logging.getLogger("cedit.api")
 
 app.add_middleware(
     CORSMiddleware,
@@ -351,6 +360,53 @@ async def refine_plan_endpoint(
         raise HTTPException(status_code=402, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/whatsapp/webhook")
+async def whatsapp_webhook_verify(
+    hub_mode: str = Query("", alias="hub.mode"),
+    hub_verify_token: str = Query("", alias="hub.verify_token"),
+    hub_challenge: str = Query("", alias="hub.challenge"),
+):
+    """Verificación Meta WhatsApp Cloud API."""
+    from whatsapp_client import WHATSAPP_VERIFY_TOKEN, is_configured
+
+    if not is_configured():
+        raise HTTPException(status_code=503, detail="WhatsApp no configurado en .env")
+    if hub_mode == "subscribe" and hub_verify_token == WHATSAPP_VERIFY_TOKEN:
+        return PlainTextResponse(content=hub_challenge)
+    raise HTTPException(status_code=403, detail="Token de verificación inválido")
+
+
+@app.post("/api/whatsapp/webhook")
+async def whatsapp_webhook_receive(request: Request):
+    """Recibe mensajes de Meta y procesa en un hilo (no se cancela con reload)."""
+    from whatsapp_client import is_configured
+    from whatsapp_handler import handle_webhook_payload, extract_messages
+
+    if not is_configured():
+        return {"status": "ignored", "reason": "whatsapp_not_configured"}
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "error", "reason": "invalid_json"}
+    msgs = extract_messages(payload)
+    if msgs:
+        log.info("WhatsApp webhook: %d mensaje(s) de %s", len(msgs), msgs[0].get("wa_id", "?"))
+    threading.Thread(target=handle_webhook_payload, args=(payload,), daemon=False).start()
+    return {"status": "ok"}
+
+
+@app.get("/api/whatsapp/status")
+async def whatsapp_status():
+    from whatsapp_client import is_configured, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_API_VERSION
+
+    return {
+        "configured": is_configured(),
+        "phone_number_id_set": bool(WHATSAPP_PHONE_NUMBER_ID),
+        "api_version": WHATSAPP_API_VERSION,
+        "webhook_path": "/api/whatsapp/webhook",
+    }
 
 
 if __name__ == "__main__":
