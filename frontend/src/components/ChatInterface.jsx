@@ -11,6 +11,9 @@ import { getMentorLoadingLabel } from '../utils/mentorActivity';
 import { isAuditSession } from '../utils/auditDecisionPoints';
 import PdfLanguageModal from './PdfLanguageModal';
 import NetworksLinks from './NetworksLinks';
+import MintRegistroPanel from './MintRegistroPanel';
+import FirmaPdfPanel from './FirmaPdfPanel';
+import SaveConversationButton from './SaveConversationButton';
 import { saveExpediente } from '../utils/expedientesStore';
 import { useI18n } from '../i18n/I18nContext';
 import {
@@ -58,6 +61,10 @@ const ChatInterface = ({
   usage = { count: 0, limit: 10 },
   sessionMode = 'chat',
   blockchainHash,
+  conversationId = '',
+  walletAddress = '',
+  onMintSuccess,
+  onConversationSaved,
   userId,
   freemiumExceeded,
   isPremium = false,
@@ -99,6 +106,7 @@ const ChatInterface = ({
   const [refineTarget, setRefineTarget] = useState(null);
   const [generatingPdf, setGeneratingPdf] = useState(null);
   const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
+  const [pdfAttestation, setPdfAttestation] = useState(null);
   /** 'network' | 'mentor' | null — solo un panel del header abierto a la vez */
   const [headerPanelOpen, setHeaderPanelOpen] = useState(null);
   const messagesEndRef = useRef(null);
@@ -251,6 +259,9 @@ const ChatInterface = ({
         typeof apiHeaders === 'function'
           ? apiHeaders()
           : apiHeaders || { headers: { 'X-User-Id': userId, 'X-Locale': uiLocale } };
+      const hdrs = headersConfig.headers || {};
+      if (conversationId) hdrs['X-Conversation-Id'] = conversationId;
+      headersConfig.headers = hdrs;
 
       const response = await axios.post(
         '/api/generate-pdf',
@@ -269,8 +280,10 @@ const ChatInterface = ({
         { responseType: 'blob', timeout: 300000, ...headersConfig }
       );
       const hash = response.headers['x-blockchain-hash'] || '';
+      const pdfKeccak = response.headers['x-pdf-hash-keccak'] || '';
       const mefScore = parseInt(response.headers['x-mef-score'] || '0', 10);
       const meets = response.headers['x-mef-meets-threshold'] === '1';
+      const firmaAvailable = response.headers['x-pdf-firma-available'] === '1';
       if (meets && mefScore >= 80) {
         saveExpediente({
           title: msg.filename ? `Plan MEF — ${msg.filename}` : 'Plan Técnico Oficial CEDIT',
@@ -280,6 +293,11 @@ const ChatInterface = ({
           hash,
           pdfLanguage: pdfOutputLanguage,
         });
+      }
+      if (firmaAvailable && pdfKeccak && isPremium) {
+        setPdfAttestation({ pdfHash: pdfKeccak, mefScore, legacyHash: hash });
+      } else {
+        setPdfAttestation(null);
       }
       const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
       const link = document.createElement('a');
@@ -380,8 +398,7 @@ const ChatInterface = ({
         </div>
       )}
 
-      {/* Freemium bar */}
-      {(isPremiumSession || isPremium) && (
+      {!isPremium && isPremiumSession && (
         <div className="shrink-0 w-full bg-white/90 backdrop-blur border-b border-border-gray px-4 py-2 flex justify-center z-10">
           <div className="w-full max-w-[850px] flex items-center gap-3">
             <span className="text-xs text-slate-500 flex items-center gap-1">
@@ -396,15 +413,7 @@ const ChatInterface = ({
                 style={{ width: `${Math.min((messageCount / freeLimit) * 100, 100)}%` }}
               />
             </div>
-            {isPremium ? (
-              <>
-                <span className="text-xs font-semibold text-amber-800 flex items-center gap-1">
-                  <span className="material-symbols-outlined text-[14px]">diamond</span>
-                  Premium · {premiumName}
-                </span>
-                <span className="text-[10px] text-slate-500">{t('chat.unlimitedAudits')}</span>
-              </>
-            ) : freemiumExceeded ? (
+            {freemiumExceeded ? (
               <button
                 type="button"
                 onClick={onRequestResetMemory}
@@ -701,10 +710,23 @@ const ChatInterface = ({
                         </div>
                       )}
 
-                    {shouldShowSyscoinBadge(msg) && (
-                      <div className="mt-2 px-2 py-2 bg-slate-50 rounded-lg border border-slate-200 flex items-center gap-2 text-xs text-slate-600">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                        Syscoin: {blockchainHash || 'registro pendiente'}
+                    {isPremium && shouldShowSyscoinBadge(msg) && (
+                      <div className="mt-2 px-2">
+                        <MintRegistroPanel
+                          compact
+                          isProConfirmed={isPremium}
+                          messages={messages}
+                          userId={userId}
+                          conversationId={conversationId}
+                          apiHeaders={apiHeaders}
+                          walletAddress={walletAddress}
+                          onMintSuccess={onMintSuccess}
+                        />
+                        {blockchainHash && (
+                          <p className="text-[10px] text-slate-500 mt-1 font-mono truncate">
+                            {t('mint.hashLabel')}: {blockchainHash}
+                          </p>
+                        )}
                       </div>
                     )}
 
@@ -778,6 +800,18 @@ const ChatInterface = ({
               </button>
             </div>
           )}
+          {pdfAttestation && isPremium && (
+            <div className="mb-2">
+              <FirmaPdfPanel
+                pdfAttestation={pdfAttestation}
+                conversationId={conversationId}
+                userId={userId}
+                apiHeaders={apiHeaders}
+                walletAddress={walletAddress}
+                isProConfirmed={isPremium}
+              />
+            </div>
+          )}
           <div className="bg-white border border-border-gray rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-slate-400 overflow-hidden transition-shadow">
             <textarea
               id="chat-textarea"
@@ -799,12 +833,28 @@ const ChatInterface = ({
                   disabled={isLoading}
                   onSelectTool={(prompt) => onSendMessage(prompt, { isPremiumTool: true })}
                 />
+                {isPremium && walletAddress && (
+                  <SaveConversationButton
+                    isProConfirmed={isPremium}
+                    walletAddress={walletAddress}
+                    messages={messages}
+                    userId={userId}
+                    conversationId={conversationId}
+                    apiHeaders={apiHeaders}
+                    onSaved={onConversationSaved}
+                    disabled={isLoading}
+                  />
+                )}
               </div>
               <button
                 type="button"
                 className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-slate-900 transition-colors"
                 onClick={handleSend}
-                disabled={(!inputValue.trim() && !selectedFile) || isLoading || (freemiumExceeded && !refineTarget)}
+                disabled={
+                  (!inputValue.trim() && !selectedFile) ||
+                  isLoading ||
+                  (freemiumExceeded && !isPremium && !refineTarget)
+                }
               >
                 {refineTarget ? t('chat.applyFix') : t('chat.analyze')}
               </button>

@@ -1,0 +1,49 @@
+{
+  "0x06f907eb3c4fbeb62ab29faffb90d330e2b45083": [
+    {
+      "token_id": 3,
+      "channel": "Web",
+      "saved_at": "2026-06-03T00:13:30.214523",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Audita este plan de proyecto para aprobación en el MEF: CEDIT_Plan_1779070180536.pdf"
+        },
+        {
+          "role": "user",
+          "content": "📄 Documento adjunto: **CEDIT_Plan_1779070180536.pdf**"
+        }
+      ]
+    },
+    {
+      "token_id": 2,
+      "channel": "Web",
+      "saved_at": "2026-06-03T00:01:58.241419",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Audita este plan de proyecto para aprobación en el MEF: CEDIT_Plan_1779070180536.pdf"
+        },
+        {
+          "role": "user",
+          "content": "📄 Documento adjunto: **CEDIT_Plan_1779070180536.pdf**"
+        }
+      ]
+    },
+    {
+      "token_id": 1,
+      "channel": "Web",
+      "saved_at": "2026-06-02T23:24:45.230862",
+      "messages": [
+        {
+          "role": "user",
+          "content": "sdfgdsgsd"
+        },
+        {
+          "role": "assistant",
+          "content": "¡Hola! Parece que hubo un error en tu mensaje. ¿Podrías escribir de nuevo para que pueda entender y ayudarte con tu consulta? Estoy aquí para orientarte con trámites y procesos del Estado."
+        }
+      ]
+    }
+  ]
+}

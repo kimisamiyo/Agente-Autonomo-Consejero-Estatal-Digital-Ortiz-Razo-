@@ -24,7 +24,31 @@ from cedit_core import (
     detect_input_mode,
     consumes_freemium_credit,
 )
-from premium_store import register_wallet, connect_wallet, lookup_wallet, is_pro_wallet
+from premium_store import (
+    register_wallet,
+    connect_wallet,
+    lookup_wallet,
+    is_pro_wallet,
+    activate_wallet,
+    record_mint_backup,
+    record_pending_pdf_attestation,
+    consume_pending_pdf_attestation,
+    peek_pending_pdf_attestation,
+    record_pdf_firma_backup,
+)
+from cedit_channel_urls import build_channel_url
+from chain_service import (
+    build_conversation_text,
+    chain_enabled,
+    pdf_chain_enabled,
+    get_chain_config,
+    hash_user_identifier,
+    keccak256_pdf_hash,
+    mint_registro,
+    mint_firma_pdf,
+    restore_conversation_for_wallet,
+    MEF_APPROVAL_THRESHOLD,
+)
 from mef_news_automation import sync_mef_news, get_latest_snapshot, MEF_NEWS_LIST_URL
 
 app = FastAPI(title="API Consejero Estatal Digital")
@@ -98,6 +122,42 @@ class PremiumConnectRequest(BaseModel):
     wallet: str
 
 
+class PremiumActivateRequest(BaseModel):
+    wallet: str
+    display_name: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class BlockchainMintRequest(BaseModel):
+    wallet: str
+    channel: str = "Web"
+    history: List[ChatMessage] = []
+    user_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    conversation_text: Optional[str] = None
+
+
+class BlockchainPdfMintRequest(BaseModel):
+    wallet: str
+    pdf_hash: str
+    channel: str = "Web"
+    channel_url: Optional[str] = None
+    mef_score: int = 0
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class BlockchainSyncBackupRequest(BaseModel):
+    wallet: str
+    token_id: int
+    channel: str = "Web"
+    kind: str = "registro"
+    history: List[ChatMessage] = []
+    pdf_hash: Optional[str] = None
+    mef_score: Optional[int] = None
+    conversation_id: Optional[str] = None
+
+
 def _uid(header: Optional[str], body_id: Optional[str]) -> str:
     return body_id or header or "web_anonymous"
 
@@ -143,12 +203,235 @@ async def premium_connect(req: PremiumConnectRequest):
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@app.post("/api/premium/activate")
+async def premium_activate(req: PremiumActivateRequest):
+    try:
+        entry = activate_wallet(req.wallet, req.display_name, req.user_id or "")
+        return {"ok": True, "is_pro": True, **entry}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/api/premium/lookup")
 async def premium_lookup(wallet: str):
     entry = lookup_wallet(wallet)
     if not entry:
         raise HTTPException(status_code=404, detail="Wallet no registrada")
     return entry
+
+
+@app.get("/api/blockchain/config")
+async def blockchain_config():
+    return get_chain_config()
+
+
+@app.get("/api/blockchain/restore")
+async def blockchain_restore(wallet: str = Query(..., min_length=6)):
+    data = restore_conversation_for_wallet(wallet)
+    if not data:
+        raise HTTPException(status_code=404, detail="No hay conversación guardada on-chain para esta wallet.")
+    if not is_pro_wallet(wallet):
+        try:
+            activate_wallet(wallet)
+        except ValueError:
+            pass
+    return {"ok": True, **data}
+
+
+@app.post("/api/blockchain/prepare-attest-web")
+async def blockchain_prepare_attest_web(req: BlockchainMintRequest):
+    if not chain_enabled():
+        raise HTTPException(status_code=503, detail="CeditRegistros no configurado en el servidor.")
+    wallet = (req.wallet or "").strip()
+    if not wallet.startswith("0x"):
+        raise HTTPException(status_code=400, detail="Wallet inválida")
+    if not is_pro_wallet(wallet):
+        raise HTTPException(status_code=403, detail="Plan Pro requerido.")
+    hist = [{"role": m.role, "content": m.content} for m in req.history]
+    text = req.conversation_text or build_conversation_text(hist)
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No hay conversación para atestiguar.")
+    cfg = get_chain_config()
+    return {
+        "ok": True,
+        "contract_address": cfg.get("contract_address"),
+        "chain_id": cfg.get("chain_id"),
+        "web_self_mint": cfg.get("web_self_mint", True),
+        "channel": req.channel or "Web",
+        "user_hash": hash_user_identifier(req.channel or "Web", user_id=req.user_id or "", wallet=wallet),
+        "conversation_text": text,
+    }
+
+
+@app.post("/api/blockchain/prepare-attest-pdf-web")
+async def blockchain_prepare_attest_pdf_web(req: BlockchainPdfMintRequest):
+    if not pdf_chain_enabled():
+        raise HTTPException(status_code=503, detail="CeditFirmasPdf no configurado.")
+    wallet = (req.wallet or "").strip()
+    if not wallet.startswith("0x"):
+        raise HTTPException(status_code=400, detail="Wallet inválida")
+    if not is_pro_wallet(wallet):
+        raise HTTPException(status_code=403, detail="Plan Pro requerido.")
+    pending = peek_pending_pdf_attestation(wallet, conversation_id=req.conversation_id or "")
+    if not pending:
+        raise HTTPException(
+            status_code=400,
+            detail="Genere el PDF oficial primero (≥80% MEF) en esta conversación.",
+        )
+    mef = int(pending.get("mef_score") or req.mef_score or 0)
+    if mef < MEF_APPROVAL_THRESHOLD:
+        raise HTTPException(status_code=400, detail=f"Índice MEF insuficiente ({mef}%).")
+    channel_url = (req.channel_url or pending.get("channel_url") or "").strip()
+    if not channel_url:
+        channel_url = build_channel_url(req.channel or "Web", conversation_id=req.conversation_id or "")
+    cfg = get_chain_config()
+    return {
+        "ok": True,
+        "contract_address": cfg.get("pdf_contract_address"),
+        "chain_id": cfg.get("chain_id"),
+        "web_self_mint": cfg.get("web_self_mint", True),
+        "pdf_hash": pending.get("pdf_hash"),
+        "channel_url": channel_url,
+        "channel": req.channel or pending.get("channel") or "Web",
+        "mef_score": mef,
+    }
+
+
+@app.post("/api/blockchain/sync-backup")
+async def blockchain_sync_backup(req: BlockchainSyncBackupRequest):
+    """Tras mint en wallet (web), indexa token en servidor."""
+    wallet = (req.wallet or "").strip()
+    if not wallet.startswith("0x"):
+        raise HTTPException(status_code=400, detail="Wallet inválida")
+    kind = (req.kind or "registro").lower()
+    if kind == "pdf_firma":
+        record_pdf_firma_backup(
+            wallet,
+            int(req.token_id),
+            pdf_hash=req.pdf_hash or "",
+            channel=req.channel or "Web",
+            mef_score=int(req.mef_score or 0),
+        )
+        if req.pdf_hash:
+            consume_pending_pdf_attestation(
+                wallet, req.pdf_hash, conversation_id=req.conversation_id or ""
+            )
+    else:
+        hist = [{"role": m.role, "content": m.content} for m in req.history]
+        record_mint_backup(
+            wallet,
+            int(req.token_id),
+            messages=hist or None,
+            channel=req.channel or "Web",
+        )
+    return {"ok": True, "token_id": int(req.token_id), "kind": kind}
+
+
+@app.post("/api/blockchain/attest")
+@app.post("/api/blockchain/mint")
+async def blockchain_mint(req: BlockchainMintRequest):
+    if not chain_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Mint no disponible: configure CEDIT_CONTRACT_ADDRESS y CEDIT_MINTER_PRIVATE_KEY en .env",
+        )
+    wallet = (req.wallet or "").strip()
+    if not wallet.startswith("0x") or len(wallet) < 10:
+        raise HTTPException(status_code=400, detail="Dirección wallet inválida")
+    try:
+        activate_wallet(wallet, user_id=req.user_id or "")
+    except ValueError:
+        pass
+    hist = [{"role": m.role, "content": m.content} for m in req.history]
+    text = req.conversation_text or build_conversation_text(hist)
+    try:
+        result = mint_registro(
+            wallet,
+            req.channel or "Web",
+            user_id=req.user_id or "",
+            wallet=wallet,
+            conversation_text=text,
+        )
+        result["user_hash_preview"] = hash_user_identifier(
+            req.channel or "Web", user_id=req.user_id or "", wallet=wallet
+        )
+        if result.get("token_id") is not None:
+            hist = [{"role": m.role, "content": m.content} for m in req.history]
+            record_mint_backup(
+                wallet,
+                int(result["token_id"]),
+                messages=hist or None,
+                channel=req.channel or "Web",
+            )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        log.exception("blockchain mint: %s", e)
+        raise HTTPException(status_code=500, detail=f"Error al acuñar NFT: {e}")
+
+
+@app.post("/api/blockchain/attest-pdf")
+async def blockchain_attest_pdf(req: BlockchainPdfMintRequest):
+    if not pdf_chain_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Firma PDF on-chain no disponible: configure CEDIT_PDF_CONTRACT_ADDRESS en .env",
+        )
+    wallet = (req.wallet or "").strip()
+    if not wallet.startswith("0x") or len(wallet) < 10:
+        raise HTTPException(status_code=400, detail="Dirección wallet inválida")
+    if int(req.mef_score) < MEF_APPROVAL_THRESHOLD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La firma PDF requiere índice MEF ≥ {MEF_APPROVAL_THRESHOLD}% (recibido: {req.mef_score}%).",
+        )
+    if not is_pro_wallet(wallet):
+        raise HTTPException(status_code=403, detail="Plan Pro requerido para firmar el PDF en blockchain.")
+    pending = consume_pending_pdf_attestation(
+        wallet,
+        req.pdf_hash,
+        conversation_id=req.conversation_id or "",
+    )
+    if not pending:
+        raise HTTPException(
+            status_code=400,
+            detail="Hash PDF no coincide con el último plan generado en esta sesión. Genere el PDF de nuevo.",
+        )
+    channel_url = (req.channel_url or pending.get("channel_url") or "").strip()
+    if not channel_url:
+        channel_url = build_channel_url(
+            req.channel or pending.get("channel") or "Web",
+            conversation_id=req.conversation_id or "",
+        )
+    try:
+        activate_wallet(wallet, user_id=req.user_id or "")
+    except ValueError:
+        pass
+    try:
+        result = mint_firma_pdf(
+            wallet,
+            pending["pdf_hash"],
+            channel_url,
+            req.channel or pending.get("channel") or "Web",
+            int(pending.get("mef_score") or req.mef_score),
+        )
+        if result.get("token_id") is not None:
+            record_pdf_firma_backup(
+                wallet,
+                int(result["token_id"]),
+                pdf_hash=result.get("pdf_hash") or pending["pdf_hash"],
+                channel=result.get("channel") or "Web",
+                mef_score=int(pending.get("mef_score") or req.mef_score),
+            )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        log.exception("blockchain attest-pdf: %s", e)
+        raise HTTPException(status_code=500, detail=f"Error al firmar PDF on-chain: {e}")
 
 
 @app.post("/api/reset-freemium")
@@ -296,9 +579,11 @@ async def generate_pdf_endpoint(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     x_wallet: Optional[str] = Header(None, alias="X-Wallet-Address"),
     x_locale: Optional[str] = Header("es", alias="X-Locale"),
+    x_conversation_id: Optional[str] = Header(None, alias="X-Conversation-Id"),
 ):
     user_id = _uid(x_user_id, request.user_id)
     pro = is_pro_wallet(x_wallet)
+    conv_id = x_conversation_id or ""
     history = [{"role": m.role, "content": m.content} for m in (request.history or [])]
     try:
         pdf_bytes, filename, doc_hash, plan_score = generate_plan_pdf(
@@ -317,17 +602,29 @@ async def generate_pdf_endpoint(
         buffer = io.BytesIO(pdf_bytes)
         buffer.seek(0)
         score_hdr = str(plan_score.get("estimated_with_official_plan", 0))
-        return StreamingResponse(
-            buffer,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}",
-                "X-Blockchain-Hash": doc_hash,
-                "X-MEF-Score": score_hdr,
-                "X-MEF-Meets-Threshold": "1" if plan_score.get("meets_expediente_threshold") else "0",
-                "X-Network": "zkSYS Syscoin Testnet",
-            },
-        )
+        mef_est = int(plan_score.get("estimated_with_official_plan", 0) or 0)
+        meets = bool(plan_score.get("meets_expediente_threshold")) and mef_est >= MEF_APPROVAL_THRESHOLD
+        pdf_keccak = keccak256_pdf_hash(pdf_bytes)
+        headers = {
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Blockchain-Hash": doc_hash,
+            "X-Pdf-Hash-Keccak": pdf_keccak,
+            "X-MEF-Score": score_hdr,
+            "X-MEF-Meets-Threshold": "1" if meets else "0",
+            "X-Pdf-Firma-Available": "1" if (meets and pro and pdf_chain_enabled()) else "0",
+            "X-Network": "zkSYS Syscoin Testnet",
+        }
+        if meets and pro and pdf_chain_enabled() and x_wallet:
+            channel_url = build_channel_url("Web", conversation_id=conv_id)
+            record_pending_pdf_attestation(
+                x_wallet.strip(),
+                pdf_hash=pdf_keccak,
+                mef_score=mef_est,
+                channel_url=channel_url,
+                channel="Web",
+                conversation_id=conv_id,
+            )
+        return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
     except FreemiumLimitError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except Exception as e:

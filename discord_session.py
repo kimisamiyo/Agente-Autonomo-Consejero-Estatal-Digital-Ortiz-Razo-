@@ -67,6 +67,14 @@ def is_pro_user(user_id: int) -> bool:
     return bool(_load_json(PRO_USERS_FILE).get(str(user_id), {}).get("active"))
 
 
+def is_pro_confirmed(user_id: int) -> bool:
+    """Plan Pro activo con wallet 0x registrada (no solo flag local)."""
+    if not is_pro_user(user_id):
+        return False
+    wallet = (get_pro_settings(user_id).get("wallet") or "").strip()
+    return wallet.startswith("0x") and len(wallet) >= 10
+
+
 def get_pro_settings(user_id: int) -> dict:
     return _load_json(PRO_USERS_FILE).get(str(user_id), {})
 
@@ -168,6 +176,16 @@ class ConversationSession:
 
     def get_plan(self) -> str:
         return self._blob.get("last_plan", "")
+
+    def set_pending_pdf(self, pdf_hash: str, mef_score: int) -> None:
+        self._blob["pending_pdf"] = {
+            "pdf_hash": (pdf_hash or "").strip().lower(),
+            "mef_score": int(mef_score or 0),
+        }
+        self.save()
+
+    def get_pending_pdf(self) -> dict:
+        return self._blob.get("pending_pdf") or {}
 
     def get_filename(self) -> str:
         return self._blob.get("filename", "")

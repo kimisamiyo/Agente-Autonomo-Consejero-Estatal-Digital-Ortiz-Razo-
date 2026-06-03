@@ -60,7 +60,8 @@ echo.
   discord.py python-telegram-bot python-dotenv pypdf fpdf2 ^
   langchain-groq langchain-huggingface langchain-pinecone langchain-core ^
   fastapi uvicorn python-multipart httpx requests ^
-  sentence-transformers
+  sentence-transformers ^
+  web3 eth-account
 
 if errorlevel 1 (
   echo.

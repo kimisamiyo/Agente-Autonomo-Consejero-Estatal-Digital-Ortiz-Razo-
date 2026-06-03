@@ -8,7 +8,14 @@ import NormativasView from './components/NormativasView';
 import { loadSettings, applySettingsToDocument } from './utils/userSettings';
 import { I18nProvider } from './i18n/I18nContext';
 import FreemiumGateModal from './components/FreemiumGateModal';
-import PremiumModal, { STORAGE_WALLET, STORAGE_NAME, STORAGE_PRO } from './components/PremiumModal';
+import PremiumModal, {
+  STORAGE_WALLET,
+  STORAGE_NAME,
+  STORAGE_PRO,
+  activatePremiumWallet,
+} from './components/PremiumModal';
+import { fetchRestoredConversation, saveSavedTokenId } from './blockchain/conversationRestore';
+import { setupWalletListeners, getLinkedAccount } from './blockchain/wallet';
 import {
   loadWebWorkspace,
   saveWebWorkspace,
@@ -18,6 +25,9 @@ import {
   packActiveChat,
   deriveChatTitle,
   FREE_CHAT_SLOTS,
+  PREMIUM_CHAT_MAX,
+  loadPremiumWorkspace,
+  savePremiumWorkspace,
 } from './utils/chatWorkspace';
 import { postChatMessage, formatChatError } from './utils/chatApi';
 import {
@@ -112,13 +122,11 @@ function App() {
   const [gateModal, setGateModal] = useState({ open: false, mode: 'limit' });
   const [walletAddress, setWalletAddress] = useState(() => localStorage.getItem(STORAGE_WALLET) || '');
   const [premiumName, setPremiumName] = useState(() => localStorage.getItem(STORAGE_NAME) || '');
-  const [isPremium, setIsPremium] = useState(() => localStorage.getItem(STORAGE_PRO) === 'true');
+  const [isPremium, setIsPremium] = useState(false);
   const [activeView, setActiveView] = useState('chat');
   const [userSettings, setUserSettings] = useState(() => loadSettings());
 
   const userId = getUserId();
-  const usageScopeId = isPremium ? conversationId : userId;
-  const apiHeaders = () => buildApiHeaders(userId, usageScopeId, walletAddress, userSettings.locale || 'es');
 
   useEffect(() => {
     applySettingsToDocument(userSettings);
@@ -126,15 +134,57 @@ function App() {
 
   const API_URL_DIRECT = '/api';
 
-  const freemiumBlocked = usage.freemium_exceeded && !isPremium;
+  /** Plan Pro confirmado por API (activate + /usage con is_pro) */
+  const proActive = Boolean(walletAddress?.trim()) && isPremium;
+
+  const linkWalletSession = useCallback(
+    async (address) => {
+      const w = (address || '').trim();
+      if (!w) {
+        setWalletAddress('');
+        setIsPremium(false);
+        localStorage.removeItem(STORAGE_WALLET);
+        localStorage.removeItem(STORAGE_PRO);
+        return null;
+      }
+      setWalletAddress(w);
+      localStorage.setItem(STORAGE_WALLET, w);
+      try {
+        const data = await activatePremiumWallet({
+          wallet: w,
+          userId,
+          apiHeaders: buildApiHeaders(userId, conversationId, w, userSettings.locale || 'es'),
+        });
+        setPremiumName(data.display_name);
+        setIsPremium(true);
+        localStorage.setItem(STORAGE_PRO, 'true');
+        return data;
+      } catch (err) {
+        console.warn('Plan Pro no confirmado:', err);
+        setIsPremium(false);
+        localStorage.removeItem(STORAGE_PRO);
+        return null;
+      }
+    },
+    [userId, conversationId, userSettings.locale]
+  );
+
+  const usageScopeId = proActive ? conversationId : userId;
+  const apiHeaders = () => buildApiHeaders(userId, usageScopeId, walletAddress, userSettings.locale || 'es');
+
+  const freemiumBlocked = usage.freemium_exceeded && !proActive;
+
+  const chatSlotCap = proActive ? PREMIUM_CHAT_MAX : FREE_CHAT_SLOTS;
 
   const persistWorkspace = useCallback(
     (nextChats, activeId) => {
-      if (!isPremium) {
+      if (proActive && walletAddress) {
+        savePremiumWorkspace({ chats: nextChats, activeChatId: activeId, wallet: walletAddress });
+      } else {
         saveWebWorkspace({ chats: nextChats, activeChatId: activeId });
       }
     },
-    [isPremium]
+    [proActive, walletAddress]
   );
 
   const syncChatsWithActive = useCallback(
@@ -151,12 +201,12 @@ function App() {
         const idx = prev.findIndex((c) => c.id === packed.id);
         let next = [...prev];
         if (idx >= 0) next[idx] = packed;
-        else next = [packed, ...next].slice(0, FREE_CHAT_SLOTS);
+        else next = [packed, ...next].slice(0, chatSlotCap);
         persistWorkspace(next, packed.id);
         return next;
       });
     },
-    [conversationId, messages, sessionMode, blockchainHash, decisionCheckpoints, nodePositions, persistWorkspace]
+    [conversationId, messages, sessionMode, blockchainHash, decisionCheckpoints, nodePositions, persistWorkspace, chatSlotCap]
   );
 
   useEffect(() => {
@@ -164,38 +214,140 @@ function App() {
       skipWorkspaceSyncRef.current = false;
       return;
     }
-    if (!isPremium) syncChatsWithActive();
-  }, [messages, sessionMode, conversationId, blockchainHash, decisionCheckpoints, nodePositions, isPremium, syncChatsWithActive]);
+    syncChatsWithActive();
+  }, [messages, sessionMode, conversationId, blockchainHash, decisionCheckpoints, nodePositions, syncChatsWithActive]);
 
   const syncUsage = useCallback(async () => {
     try {
       const { data } = await axios.get(`${API_URL_DIRECT}/usage`, apiHeaders());
       setUsage(data);
-      if (data.is_pro) setIsPremium(true);
-      if (data.freemium_exceeded && !data.is_pro) setSessionMode('freemium');
+      if (walletAddress) {
+        const confirmed = data.is_pro === true;
+        setIsPremium(confirmed);
+        if (confirmed) localStorage.setItem(STORAGE_PRO, 'true');
+        else localStorage.removeItem(STORAGE_PRO);
+      } else {
+        setIsPremium(false);
+        localStorage.removeItem(STORAGE_PRO);
+      }
+      if (data.freemium_exceeded && !proActive) setSessionMode('freemium');
     } catch {
       /* ignore */
     }
-  }, [userId, usageScopeId, walletAddress, isPremium]);
+  }, [userId, usageScopeId, walletAddress, isPremium, proActive]);
+
+  const applyChainRestore = useCallback(
+    async (wallet) => {
+      try {
+        const data = await fetchRestoredConversation(
+          wallet,
+          buildApiHeaders(userId, conversationId, wallet, userSettings.locale || 'es')
+        );
+        if (!data?.messages?.length) return false;
+        const restoredChat = packActiveChat({
+          conversationId: newConversationId(),
+          messages: data.messages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            fullContent: m.content,
+            mode: m.mode || 'chat',
+          })),
+          sessionMode: 'chat',
+          blockchainHash: data.user_hash || null,
+        });
+        restoredChat.title = deriveChatTitle(restoredChat.messages);
+        skipWorkspaceSyncRef.current = true;
+        setChats([restoredChat]);
+        setConversationId(restoredChat.id);
+        setMessages(restoredChat.messages);
+        setSessionMode('chat');
+        setBlockchainHash(data.user_hash || null);
+        setDecisionCheckpoints([]);
+        setNodePositions({});
+        if (data.token_id != null) saveSavedTokenId(wallet, data.token_id);
+        persistWorkspace([restoredChat], restoredChat.id);
+        return true;
+      } catch (err) {
+        if (err.response?.status !== 404) console.warn('restore conversation', err);
+        return false;
+      }
+    },
+    [userId, conversationId, userSettings.locale, persistWorkspace]
+  );
 
   useEffect(() => {
-    const w = localStorage.getItem(STORAGE_WALLET);
-    if (w && localStorage.getItem(STORAGE_PRO) === 'true') {
-      axios.post(`${API_URL_DIRECT}/premium/connect`, { wallet: w }, apiHeaders())
-        .then(({ data }) => {
-          setPremiumName(data.display_name);
-          setIsPremium(true);
-        })
-        .catch(() => {
-          localStorage.removeItem(STORAGE_PRO);
+    let cancelled = false;
+    (async () => {
+      let w = localStorage.getItem(STORAGE_WALLET) || '';
+      const linked = await getLinkedAccount();
+      if (linked) w = linked;
+      if (!w || cancelled) return;
+
+      const data = await linkWalletSession(w);
+      if (cancelled) return;
+      if (!data) return;
+
+      const walletKey = data.wallet || w;
+      const premiumWs = loadPremiumWorkspace(walletKey);
+      if (premiumWs?.chats?.length) {
+        skipWorkspaceSyncRef.current = true;
+        const active = premiumWs.chats.find((c) => c.id === premiumWs.activeChatId) || premiumWs.chats[0];
+        setChats(premiumWs.chats);
+        setConversationId(active.id);
+        setMessages(active.messages || []);
+        setSessionMode(active.sessionMode || 'chat');
+        setBlockchainHash(active.blockchainHash || null);
+        setDecisionCheckpoints(active.decisionCheckpoints || []);
+        setNodePositions(active.nodePositions || {});
+      } else {
+        await applyChainRestore(walletKey);
+      }
+      syncUsage();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [linkWalletSession, applyChainRestore]);
+
+  useEffect(() => {
+    try {
+      setupWalletListeners((addr) => {
+        if (addr) linkWalletSession(addr);
+        else {
+          setWalletAddress('');
           setIsPremium(false);
-        });
+          localStorage.removeItem(STORAGE_WALLET);
+          localStorage.removeItem(STORAGE_PRO);
+        }
+      });
+    } catch {
+      /* ignore */
     }
-  }, []);
+  }, [linkWalletSession]);
 
   useEffect(() => {
     syncUsage();
   }, [syncUsage]);
+
+  /** Si Pali/MetaMask conectó el sitio después de cargar la página */
+  useEffect(() => {
+    if (proActive) return undefined;
+    const poll = setInterval(async () => {
+      const linked = await getLinkedAccount();
+      if (linked) await linkWalletSession(linked);
+    }, 2000);
+    const stop = setTimeout(() => clearInterval(poll), 20000);
+    const onFocus = async () => {
+      const linked = await getLinkedAccount();
+      if (linked) linkWalletSession(linked);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(stop);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [proActive, isPremium, linkWalletSession]);
 
   const openLimitGate = useCallback(() => {
     setGateModal({ open: true, mode: 'limit' });
@@ -353,9 +505,9 @@ function App() {
     if (!nextChats.some((c) => c.id === conversationId) && messages.length > 0) {
       nextChats = [packed, ...nextChats];
     }
-    nextChats = nextChats.slice(0, FREE_CHAT_SLOTS);
+    if (!proActive) nextChats = nextChats.slice(0, FREE_CHAT_SLOTS);
 
-    if (!isPremium && nextChats.length >= FREE_CHAT_SLOTS) {
+    if (!proActive && nextChats.length >= FREE_CHAT_SLOTS) {
       setChats(nextChats);
       persistWorkspace(nextChats, conversationId);
       setGateModal({ open: true, mode: 'maxChats' });
@@ -364,7 +516,9 @@ function App() {
 
     const newId = newConversationId();
     const newChat = createEmptyChat(newId);
-    const finalChats = [...nextChats, newChat].slice(0, FREE_CHAT_SLOTS);
+    const finalChats = proActive
+      ? [...nextChats, newChat].slice(0, PREMIUM_CHAT_MAX)
+      : [...nextChats, newChat].slice(0, FREE_CHAT_SLOTS);
 
     setChats(finalChats);
     loadChat(newChat);
@@ -385,7 +539,7 @@ function App() {
     });
     let nextChats = chats.map((c) => (c.id === conversationId ? packed : c));
     if (!nextChats.find((c) => c.id === conversationId) && messages.length > 0) {
-      nextChats = [packed, ...nextChats].slice(0, FREE_CHAT_SLOTS);
+      nextChats = [packed, ...nextChats].slice(0, chatSlotCap);
     }
     const target = nextChats.find((c) => c.id === chatId);
     if (!target) return;
@@ -528,11 +682,23 @@ function App() {
     }
   };
 
-  const handlePremiumActivated = ({ wallet, displayName, isPro }) => {
-    setWalletAddress(wallet);
-    setPremiumName(displayName);
-    setIsPremium(isPro);
+  const handlePremiumActivated = async ({ wallet, displayName }) => {
+    const data = await linkWalletSession(wallet);
+    if (!data) return;
+    if (displayName) setPremiumName(displayName);
+    setSessionMode((m) => (m === 'freemium' ? 'chat' : m));
     setGateModal({ open: false, mode: 'limit' });
+    setUsage({ count: 0, limit: '∞', remaining: '∞', freemium_exceeded: false, is_pro: true });
+    const premiumWs = loadPremiumWorkspace(data.wallet || wallet);
+    if (premiumWs?.chats?.length) {
+      skipWorkspaceSyncRef.current = true;
+      const active = premiumWs.chats.find((c) => c.id === premiumWs.activeChatId) || premiumWs.chats[0];
+      setChats(premiumWs.chats);
+      loadChat(active);
+    } else {
+      const restored = await applyChainRestore(data.wallet || wallet);
+      if (!restored) persistWorkspace(chats, conversationId);
+    }
     syncUsage();
   };
 
@@ -541,7 +707,7 @@ function App() {
     title: c.id === conversationId ? deriveChatTitle(messages) || c.title : c.title,
   }));
 
-  const canCreateNewChat = isPremium || chats.length < FREE_CHAT_SLOTS;
+  const canCreateNewChat = proActive || chats.length < FREE_CHAT_SLOTS;
 
   return (
     <I18nProvider locale={userSettings.locale || 'es'}>
@@ -569,7 +735,7 @@ function App() {
           sessionMode={sessionMode}
           usage={usage}
           canCreateNewChat={canCreateNewChat}
-          isPremium={isPremium}
+          isPremium={proActive}
         />
       </ErrorBoundary>
       <ErrorBoundary>
@@ -596,10 +762,52 @@ function App() {
             usage={usage}
             sessionMode={sessionMode}
             blockchainHash={blockchainHash}
+            conversationId={conversationId}
+            walletAddress={walletAddress}
+            onMintSuccess={async (data) => {
+              const h = data?.user_hash || data?.user_hash_preview;
+              if (h) setBlockchainHash(h);
+              const w = data?.recipient || walletAddress;
+              if (data?.token_id != null && w) saveSavedTokenId(w, data.token_id);
+              if (w && !proActive) {
+                try {
+                  const entry = await activatePremiumWallet({
+                    wallet: w,
+                    userId,
+                    apiHeaders: apiHeaders(),
+                  });
+                  await handlePremiumActivated({
+                    wallet: entry.wallet,
+                    displayName: entry.display_name,
+                    isPro: true,
+                  });
+                } catch {
+                  setWalletAddress(w);
+                }
+              }
+            }}
+            onConversationSaved={(data) => {
+              const h = data?.user_hash;
+              if (h) setBlockchainHash(h);
+              if (data?.token_id != null && walletAddress) {
+                saveSavedTokenId(walletAddress, data.token_id);
+              }
+              if (data?.token_id != null) {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    role: 'bot',
+                    content: `✅ **Conversación guardada en blockchain** — NFT #${data.token_id}`,
+                    mode: 'chat',
+                    isDocAck: true,
+                  },
+                ]);
+              }
+            }}
             userId={userId}
             uiLocale={userSettings.locale || 'es'}
             freemiumExceeded={freemiumBlocked}
-            isPremium={isPremium}
+            isPremium={proActive}
             premiumName={premiumName}
             onOpenPremium={() => {
               setGateModal({ open: false, mode: 'limit' });

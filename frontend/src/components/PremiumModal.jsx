@@ -1,203 +1,179 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { connectWallet, hasWalletProvider, getLinkedAccount } from '../blockchain/wallet';
+import { useI18n } from '../i18n/I18nContext';
+import {
+  ceditBtnPrimaryClass,
+  ceditBtnSecondaryClass,
+  ceditCardClass,
+  ceditIconBoxClass,
+} from '../theme/ceditPalette';
 
 const STORAGE_WALLET = 'cedit_wallet';
 const STORAGE_NAME = 'cedit_display_name';
 const STORAGE_PRO = 'cedit_premium_active';
 
+async function activatePremiumWallet({ wallet, userId, apiHeaders }) {
+  const { data } = await axios.post(
+    '/api/premium/activate',
+    { wallet: wallet.trim(), user_id: userId },
+    apiHeaders
+  );
+  return data;
+}
+
 const PremiumModal = ({ isOpen, onClose, onActivated, userId, apiHeaders }) => {
-  const [mode, setMode] = useState('login');
-  const [wallet, setWallet] = useState('');
-  const [displayName, setDisplayName] = useState('');
+  const { t } = useI18n();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [hint, setHint] = useState('');
+  const [linkedHint, setLinkedHint] = useState('');
+
+  const finishActivation = useCallback(
+    (entry) => {
+      localStorage.setItem(STORAGE_WALLET, entry.wallet);
+      localStorage.setItem(STORAGE_NAME, entry.display_name);
+      localStorage.setItem(STORAGE_PRO, 'true');
+      onActivated({
+        wallet: entry.wallet,
+        displayName: entry.display_name,
+        isPro: true,
+      });
+      onClose();
+    },
+    [onActivated, onClose]
+  );
 
   useEffect(() => {
-    if (!isOpen) return;
-    const savedWallet = localStorage.getItem(STORAGE_WALLET) || '';
-    const savedName = localStorage.getItem(STORAGE_NAME) || '';
-    setWallet(savedWallet);
-    setDisplayName(savedName);
-    setMode(savedWallet ? 'login' : 'register');
-    setError('');
-    setHint(savedWallet ? 'Wallet guardada. Pulse «Cargar usuario» o actualice la dirección.' : '');
-  }, [isOpen]);
-
-  const saveLocal = (entry) => {
-    localStorage.setItem(STORAGE_WALLET, entry.wallet);
-    localStorage.setItem(STORAGE_NAME, entry.display_name);
-    localStorage.setItem(STORAGE_PRO, 'true');
-    onActivated({
-      wallet: entry.wallet,
-      displayName: entry.display_name,
-      isPro: true,
-    });
-    onClose();
-  };
-
-  const handleLookup = async () => {
-    if (!wallet.trim()) {
-      setError('Ingrese su wallet.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await axios.get('/api/premium/lookup', {
-        params: { wallet: wallet.trim() },
-        ...apiHeaders,
-      });
-      setDisplayName(data.display_name);
-      setHint(`Usuario encontrado: ${data.display_name}`);
-      setMode('login');
-    } catch {
-      setHint('');
-      setMode('register');
-      setError('Wallet nueva. Complete su nombre para registrarse.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRegister = async () => {
-    if (!wallet.trim() || !displayName.trim()) {
-      setError('Wallet y nombre de usuario son obligatorios.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const { data } = await axios.post(
-        '/api/premium/register',
-        { wallet: wallet.trim(), display_name: displayName.trim(), user_id: userId },
-        apiHeaders
-      );
-      saveLocal(data);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'No se pudo registrar.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    if (!isOpen) return undefined;
+    let cancelled = false;
+    (async () => {
+      const linked = await getLinkedAccount();
+      if (cancelled || !linked) return;
+      setLinkedHint(`${linked.slice(0, 6)}…${linked.slice(-4)}`);
+      setLoading(true);
+      setError('');
+      try {
+        const entry = await activatePremiumWallet({ wallet: linked, userId, apiHeaders });
+        if (!cancelled) finishActivation(entry);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.response?.data?.detail || err.message || t('premium.error'));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setLinkedHint('');
+    };
+  }, [isOpen, userId, apiHeaders, t, finishActivation]);
 
   const handleConnect = async () => {
-    if (!wallet.trim()) {
-      setError('Ingrese su wallet.');
+    if (!hasWalletProvider()) {
+      setError(t('premium.noWallet'));
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const { data } = await axios.post(
-        '/api/premium/connect',
-        { wallet: wallet.trim() },
-        apiHeaders
-      );
-      saveLocal(data);
+      const { address } = await connectWallet();
+      const entry = await activatePremiumWallet({ wallet: address, userId, apiHeaders });
+      finishActivation(entry);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Wallet no registrada. Use registro primero.');
-      setMode('register');
+      setError(err.response?.data?.detail || err.message || t('premium.error'));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBackdrop = (e) => {
+    if (e.target === e.currentTarget && !loading) onClose?.();
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 cedit-fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-red-100 overflow-hidden">
-        <div className="px-6 py-4 bg-gradient-to-r from-red-800 to-red-700 text-white">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs uppercase tracking-wider opacity-90">Plan Premium</p>
-              <h2 className="text-lg font-bold">Activar modo Premium</h2>
-            </div>
-            <button type="button" onClick={onClose} className="text-white/80 hover:text-white text-xl leading-none">
-              ×
-            </button>
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm cedit-fade-in"
+      onClick={handleBackdrop}
+      role="presentation"
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200/90 overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="premium-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50/80 px-6 py-4 flex items-center gap-3 border-b border-slate-200/80">
+          <div className={ceditIconBoxClass('blue', 'w-11 h-11')}>
+            <span className="material-symbols-outlined text-white text-xl">account_balance_wallet</span>
           </div>
-          <p className="text-[11px] mt-2 opacity-90">
-            Vincule su wallet Syscoin y guarde su perfil para auditorías ilimitadas.
-          </p>
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-blue-800">{t('premium.badge')}</p>
+            <h2 id="premium-modal-title" className="text-slate-800 font-bold text-lg leading-tight">
+              {t('premium.title')}
+            </h2>
+            <p className="text-slate-500 text-xs">{t('app.subtitle')}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="text-slate-400 hover:text-slate-700 text-xl leading-none shrink-0 disabled:opacity-40"
+            aria-label={t('gate.cancel')}
+          >
+            ×
+          </button>
         </div>
 
-        <div className="p-6 space-y-4">
-          {mode === 'register' ? (
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Nombre de usuario</label>
-              <input
-                type="text"
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-1 focus:ring-red-500 focus:border-red-400"
-                placeholder="Ej: María R. — Servidor MEF"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-              />
-              <p className="text-[10px] text-slate-400 mt-1">Primera vez: elija cómo aparecerá en CEDIT.</p>
-            </div>
-          ) : (
-            <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-              <p className="text-[10px] text-slate-500 uppercase font-semibold">Usuario vinculado</p>
-              <p className="text-sm font-bold text-slate-800">{displayName || '—'}</p>
-            </div>
+        <div className="px-6 py-5 text-slate-700 text-sm leading-relaxed space-y-3 bg-gradient-to-b from-slate-50/90 to-white">
+          <p>{t('premium.body')}</p>
+          <ul className={`text-xs space-y-2 ${ceditCardClass('blue', 'px-3 py-3')}`}>
+            <li className="flex items-start gap-2 text-slate-700">
+              <span className="material-symbols-outlined text-blue-700 text-base shrink-0">check_circle</span>
+              {t('premium.benefit1')}
+            </li>
+            <li className="flex items-start gap-2 text-slate-700">
+              <span className="material-symbols-outlined text-blue-700 text-base shrink-0">check_circle</span>
+              {t('premium.benefit2')}
+            </li>
+            <li className="flex items-start gap-2 text-slate-700">
+              <span className="material-symbols-outlined text-blue-700 text-base shrink-0">check_circle</span>
+              {t('premium.benefit3')}
+            </li>
+          </ul>
+          {linkedHint && loading && (
+            <p className={`text-xs text-blue-800 ${ceditCardClass('blue')}`}>
+              {t('premium.syncing', { wallet: linkedHint })}
+            </p>
           )}
+          {error && (
+            <p className={`text-xs text-slate-700 ${ceditCardClass('gray')}`} role="alert">
+              {error}
+            </p>
+          )}
+        </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Dirección wallet</label>
-            <input
-              type="text"
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-1 focus:ring-red-500"
-              placeholder="0x… o dirección Syscoin"
-              value={wallet}
-              onChange={(e) => setWallet(e.target.value)}
-            />
-          </div>
-
-          {hint && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">{hint}</p>}
-          {error && <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
-
-          <div className="flex flex-col gap-2 pt-2">
-            {mode === 'register' ? (
-              <button
-                type="button"
-                disabled={loading}
-                onClick={handleRegister}
-                className="w-full py-2.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-white text-sm font-bold hover:opacity-95 disabled:opacity-50"
-              >
-                {loading ? 'Registrando…' : 'Registrar y activar Premium'}
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleConnect}
-                  className="w-full py-2.5 rounded-lg bg-gradient-to-r from-red-700 to-red-600 text-white text-sm font-bold hover:opacity-95 disabled:opacity-50"
-                >
-                  {loading ? 'Cargando…' : 'Cargar usuario'}
-                </button>
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleLookup}
-                  className="w-full py-2 text-xs text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50"
-                >
-                  Buscar nombre por wallet
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              className="text-xs text-slate-500 hover:text-slate-800"
-              onClick={() => {
-                setMode(mode === 'register' ? 'login' : 'register');
-                setError('');
-              }}
-            >
-              {mode === 'register' ? '¿Ya tiene wallet? Cargar usuario' : '¿Primera vez? Registrar cuenta'}
-            </button>
-          </div>
+        <div className="px-6 pb-6 flex flex-col gap-2 bg-slate-50/50 border-t border-slate-100">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleConnect}
+            className={`w-full ${ceditBtnPrimaryClass('blue')}`}
+          >
+            <span className="material-symbols-outlined text-base">account_balance_wallet</span>
+            {loading ? t('premium.loading') : t('premium.connect')}
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={onClose}
+            className={`w-full ${ceditBtnSecondaryClass()} text-slate-500`}
+          >
+            {t('gate.cancel')}
+          </button>
         </div>
       </div>
     </div>
@@ -205,4 +181,4 @@ const PremiumModal = ({ isOpen, onClose, onActivated, userId, apiHeaders }) => {
 };
 
 export default PremiumModal;
-export { STORAGE_WALLET, STORAGE_NAME, STORAGE_PRO };
+export { STORAGE_WALLET, STORAGE_NAME, STORAGE_PRO, activatePremiumWallet };

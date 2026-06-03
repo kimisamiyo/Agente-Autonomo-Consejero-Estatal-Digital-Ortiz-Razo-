@@ -1,5 +1,8 @@
 /** Workspace gratuito: hasta 2 chats en cookie, cupo de auditorías compartido (vía userId en API). */
 export const FREE_CHAT_SLOTS = 2;
+/** Plan Pro (wallet conectada): chats recientes en localStorage, sin tope de 2. */
+export const PREMIUM_CHAT_MAX = 50;
+const PREMIUM_LS_PREFIX = 'cedit_premium_workspace_';
 const COOKIE_NAME = 'cedit_web_workspace';
 const MAX_AGE_SEC = 7 * 24 * 60 * 60;
 const MAX_MESSAGES = 16;
@@ -128,6 +131,36 @@ export function saveFreshWorkspace(chat) {
   const single = trimChat(chat);
   saveWebWorkspace({ chats: [single], activeChatId: single.id });
   return single;
+}
+
+export function loadPremiumWorkspace(wallet) {
+  if (!wallet) return null;
+  try {
+    const key = PREMIUM_LS_PREFIX + wallet.toLowerCase();
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data?.activeChatId) return null;
+    data.chats = (data.chats || []).slice(0, PREMIUM_CHAT_MAX).map(trimChat);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export function savePremiumWorkspace({ chats, activeChatId, wallet }) {
+  if (!wallet) return;
+  try {
+    const key = PREMIUM_LS_PREFIX + wallet.toLowerCase();
+    const payload = {
+      chats: (chats || []).slice(0, PREMIUM_CHAT_MAX).map(trimChat),
+      activeChatId,
+      savedAt: Date.now(),
+    };
+    localStorage.setItem(key, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('cedit premium workspace', e);
+  }
 }
 
 export function packActiveChat({

@@ -102,7 +102,11 @@ const Sidebar = ({
             {t('nav.resetMemory')}
           </button>
 
-          {!isPremium && (
+          {isPremium ? (
+            <p className="mt-2 text-[10px] text-center font-semibold text-blue-900 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1.5">
+              {t('nav.proActive')}
+            </p>
+          ) : (
             <p className="mt-2 text-[10px] text-slate-500 text-center">
               {t('nav.audits', { count: usage.count ?? 0, limit: usage.limit ?? 10, shared: sharedLabel })}
             </p>

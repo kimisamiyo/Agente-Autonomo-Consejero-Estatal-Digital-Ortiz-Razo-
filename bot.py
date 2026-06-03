@@ -30,6 +30,7 @@ from cedit_core import (
 )
 from discord_mentor import is_mentor_mode, pdf_lock_reason, mentor_chat_body
 from discord_session import get_session, activate_pro_user, get_pro_settings
+from chain_service import chain_enabled, mint_registro, build_conversation_text
 from discord_ui import (
     welcome_embed,
     audit_bar_embed,
@@ -187,10 +188,13 @@ async def send_bot_response(
     mentor = is_mentor_mode(result.get("mode", ""), mode)
 
     key = _conv_key(channel_id or getattr(getattr(target, "channel", None), "id", 0), user.id if user else 0, is_dm)
+    from discord_session import is_pro_confirmed
+
     action_view = MentorActionView(
         key,
         show_pdf=bool(result.get("show_pdf")),
         has_plan=bool(sess.get_plan()),
+        is_pro=is_pro_confirmed(user.id if user else 0),
     )
 
     if mentor and (result.get("opinion") or result.get("guide_graph") or result.get("response")):
@@ -275,6 +279,75 @@ async def slash_reiniciar(interaction: discord.Interaction):
     )
 
 
+@bot.tree.command(name="mint_registro", description="Atestiguar conversación en blockchain zkTanenbaum (≥80% MEF)")
+@app_commands.describe(wallet="Dirección 0x… que recibirá el NFT (opcional si ya usó /conectar_wallet)")
+async def slash_mint_registro(interaction: discord.Interaction, wallet: str = ""):
+    if not chain_enabled():
+        await interaction.response.send_message(
+            embed=peru_embed(
+                "🔒 **Mint blockchain no configurado** en el servidor.\n\n"
+                "El administrador debe definir `CEDIT_CONTRACT_ADDRESS` y `CEDIT_MINTER_PRIVATE_KEY` en `.env`.",
+                requested_by=interaction.user,
+            ),
+            ephemeral=True,
+        )
+        return
+    is_dm = _is_dm(interaction.channel)
+    sess = get_session(interaction.channel_id, interaction.user.id, is_dm)
+    mentor = sess.get_mentor_result()
+    if not mentor or not mentor.get("show_pdf"):
+        await interaction.response.send_message(
+            embed=peru_embed(
+                "La **atestación en blockchain** se habilita cuando su expediente alcanza **≥80%** de viabilidad MEF.\n\n"
+                "Siga conversando con el mentor o use **Mis métricas**.",
+                requested_by=interaction.user,
+            ),
+            ephemeral=True,
+        )
+        return
+    pro = get_pro_settings(interaction.user.id)
+    recipient = (wallet or pro.get("wallet") or "").strip()
+    if not recipient.startswith("0x"):
+        await interaction.response.send_message(
+            embed=peru_embed(
+                "Indique su **wallet** (0x…):\n"
+                "`/mint_registro wallet:0xSuDireccion`\n\n"
+                "O active **`/conectar_wallet`** con su dirección.",
+                requested_by=interaction.user,
+            ),
+            ephemeral=True,
+        )
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        text = build_conversation_text(sess.history)
+        result = mint_registro(
+            recipient,
+            "Discord",
+            user_id=f"discord_{interaction.user.id}",
+            wallet=recipient,
+            conversation_text=text,
+        )
+        lines = [
+            f"✅ **Conversación atestiguada** — NFT `#{result.get('token_id', '—')}`",
+            f"🔗 Tx: `{result.get('tx_hash', '—')}`",
+            f"👤 Hash anónimo: `{result.get('user_hash', '—')[:18]}…`",
+        ]
+        if result.get("explorer_tx"):
+            lines.append(f"[Ver transacción]({result['explorer_tx']})")
+        if result.get("explorer_nft"):
+            lines.append(f"[Ver NFT]({result['explorer_nft']})")
+        await interaction.followup.send(
+            embed=peru_embed("\n".join(lines), requested_by=interaction.user, title="⛓️ Atestigación blockchain"),
+            ephemeral=True,
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            embed=peru_embed(f"Error al acuñar: {e}", requested_by=interaction.user),
+            ephemeral=True,
+        )
+
+
 @bot.tree.command(name="conectar_wallet", description="Activar Plan Pro (blockchain + memoria persistente)")
 @app_commands.describe(
     wallet="Dirección wallet o 'demo' para prueba",
@@ -285,6 +358,16 @@ async def slash_wallet(
     wallet: str,
     guardar_memoria: bool = True,
 ):
+    wallet = (wallet or "").strip()
+    if not wallet.startswith("0x") or len(wallet) < 10:
+        await interaction.response.send_message(
+            embed=peru_embed(
+                "Indique una **wallet válida** (0x…):\n`/conectar_wallet wallet:0xSuDireccion`",
+                requested_by=interaction.user,
+            ),
+            ephemeral=True,
+        )
+        return
     activate_pro_user(interaction.user.id, wallet=wallet, persist=guardar_memoria)
     await interaction.response.send_message(
         embed=pro_welcome_embed(wallet, guardar_memoria, requested_by=interaction.user),

@@ -28,6 +28,11 @@ __pycache__/
 .cedit_telegram_sessions.json
 .cedit_whatsapp_sessions.json
 .discord_msg_locks/
+
+# Solidity / Hardhat (contracts/)
+contracts/node_modules/
+contracts/cache/
+contracts/artifacts/
 .cedit_avatar_synced
 .cedit_profile_synced
 .cedit_discord_sessions.json

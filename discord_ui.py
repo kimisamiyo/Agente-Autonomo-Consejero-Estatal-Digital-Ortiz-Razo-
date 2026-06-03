@@ -117,7 +117,8 @@ def welcome_embed(requested_by: Optional[discord.abc.User] = None) -> discord.Em
         "• `/auditar` — guiar o auditar con texto\n"
         "• Adjunte **PDF** en el chat para auditar expediente\n"
         "• `/metricas` · `/expediente` · `/uso` · `/reiniciar_memoria`\n"
-        "• `/conectar_wallet` — Plan Pro\n\n"
+        "• `/conectar_wallet` — activar Plan Pro (wallet 0x…)\n"
+        "• `/mint_registro` — atestiguar en blockchain (≥80% MEF, también vía botón si es Pro)\n\n"
         "📥 **PDF oficial** desde **≥80%** de viabilidad · **Mis métricas** bajo demanda.\n"
         f"🌐 **Redes** — Discord, comunidad y [@{TELEGRAM_BOT_USERNAME}]({TELEGRAM_BOT_URL}) en Telegram."
     )
@@ -494,8 +495,9 @@ def pro_welcome_embed(
             "**Buen día.**\n\n"
             "Su **Plan Pro** ha sido activado correctamente.\n\n"
             f"• Wallet: `{wallet[:16]}...`\n"
-            f"• Guardar conversaciones: **{'Sí' if persist else 'No (modo privado)'}**\n"
-            "• Auditorías **ilimitadas** y contexto entre sesiones"
+            f"• Memoria entre sesiones: **{'Sí' if persist else 'No (modo privado)'}**\n"
+            "• Auditorías **ilimitadas**\n"
+            "• Use **💾 Guardar conversación** en los botones bajo cada respuesta del mentor"
         ),
         color=PERU_GOLD,
     )
@@ -636,11 +638,84 @@ class MainMenuView(discord.ui.View):
         )
 
     @discord.ui.button(
+        label="Guardar conversación",
+        style=discord.ButtonStyle.secondary,
+        emoji="💾",
+        custom_id="cedit:btn_guardar_conv",
+        row=0,
+    )
+    async def btn_guardar_conv(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from discord_session import get_session, get_pro_settings, is_pro_confirmed
+        from chain_service import chain_enabled, get_chain_config
+
+        if not chain_enabled():
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Blockchain no configurada en el servidor.",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        if not is_pro_confirmed(interaction.user.id):
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Active **Plan Pro** con `/conectar_wallet wallet:0xSuDireccion` "
+                    "para guardar en blockchain.",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        wallet = (get_pro_settings(interaction.user.id).get("wallet") or "").strip()
+        if not wallet.startswith("0x"):
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Indique su wallet: `/conectar_wallet wallet:0xSuDireccion`",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        is_dm = isinstance(interaction.channel, discord.DMChannel)
+        ch_id = interaction.channel_id
+        user_id = interaction.user.id
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        sess = get_session(ch_id, user_id, is_dm)
+        try:
+            result = _mint_discord_conversation(sess, user_id, wallet)
+            cfg = get_chain_config()
+            contract_url = cfg.get("contract_explorer_url") or ""
+            lines = [
+                f"✅ **Conversación guardada on-chain** — NFT `#{result.get('token_id', '—')}`",
+                f"🔗 `{result.get('tx_hash', '—')}`",
+            ]
+            if result.get("explorer_tx"):
+                lines.append(f"[Transacción]({result['explorer_tx']})")
+            if result.get("explorer_nft"):
+                lines.append(f"[Ver NFT]({result['explorer_nft']})")
+            if contract_url:
+                lines.append(f"[Contrato CeditRegistros]({contract_url})")
+            await interaction.followup.send(
+                embed=peru_embed(
+                    "\n".join(lines),
+                    requested_by=interaction.user,
+                    title="💾 Guardado en blockchain",
+                ),
+                ephemeral=True,
+            )
+        except Exception as ex:
+            await interaction.followup.send(
+                embed=peru_embed(f"No se pudo guardar: {ex}", requested_by=interaction.user),
+                ephemeral=True,
+            )
+
+    @discord.ui.button(
         label="Reiniciar memoria",
         style=discord.ButtonStyle.secondary,
         emoji="🧠",
         custom_id="cedit:btn_reset",
-        row=0,
+        row=1,
     )
     async def btn_reset(self, interaction: discord.Interaction, button: discord.ui.Button):
         is_dm = isinstance(interaction.channel, discord.DMChannel)
@@ -659,18 +734,113 @@ class MainMenuView(discord.ui.View):
         )
 
 
+def _mint_discord_conversation(sess, user_id: int, wallet: str) -> dict:
+    """Acuña la conversación en CeditRegistros (Plan Pro)."""
+    from chain_service import mint_registro, build_conversation_text
+    from premium_store import record_mint_backup, activate_wallet
+
+    wallet = (wallet or "").strip()
+    if not wallet.startswith("0x"):
+        raise ValueError("Wallet inválida. Use `/conectar_wallet` con su dirección 0x…")
+    if not sess.history:
+        raise ValueError("No hay mensajes en esta conversación para guardar.")
+
+    try:
+        activate_wallet(wallet, user_id=f"discord_{user_id}")
+    except ValueError:
+        pass
+
+    text = build_conversation_text(sess.history)
+    result = mint_registro(
+        wallet,
+        "Discord",
+        user_id=f"discord_{user_id}",
+        wallet=wallet,
+        conversation_text=text,
+    )
+    if result.get("token_id") is not None:
+        record_mint_backup(
+            wallet,
+            int(result["token_id"]),
+            messages=sess.history[-40:],
+            channel="Discord",
+        )
+    return result
+
+
+def _mint_discord_pdf_firma(sess, user_id: int, wallet: str, channel_id: int) -> dict:
+    """Acuña firma del plan PDF en CeditFirmasPdf (≥80% MEF)."""
+    from chain_service import mint_firma_pdf, pdf_chain_enabled
+    from premium_store import consume_pending_pdf_attestation, record_pdf_firma_backup, activate_wallet
+    from cedit_channel_urls import build_channel_url
+
+    wallet = (wallet or "").strip()
+    if not wallet.startswith("0x"):
+        raise ValueError("Wallet inválida. Use `/conectar_wallet` con su dirección 0x…")
+    if not pdf_chain_enabled():
+        raise RuntimeError("Contrato CeditFirmasPdf no configurado en el servidor.")
+
+    pending = sess.get_pending_pdf()
+    if not pending.get("pdf_hash"):
+        raise ValueError("Genere primero el **PDF oficial MEF** en esta conversación.")
+
+    conv_id = f"discord_{channel_id}_{user_id}"
+    entry = consume_pending_pdf_attestation(
+        wallet, pending["pdf_hash"], conversation_id=conv_id
+    )
+    if not entry:
+        raise ValueError(
+            "El hash PDF no coincide con el último plan generado. Vuelva a pulsar **PDF oficial MEF**."
+        )
+
+    try:
+        activate_wallet(wallet, user_id=f"discord_{user_id}")
+    except ValueError:
+        pass
+
+    channel_url = entry.get("channel_url") or build_channel_url(
+        "Discord", discord_channel_id=channel_id
+    )
+    result = mint_firma_pdf(
+        wallet,
+        entry["pdf_hash"],
+        channel_url,
+        entry.get("channel") or "Discord",
+        int(entry.get("mef_score") or pending.get("mef_score") or 80),
+    )
+    if result.get("token_id") is not None:
+        record_pdf_firma_backup(
+            wallet,
+            int(result["token_id"]),
+            pdf_hash=result.get("pdf_hash") or entry["pdf_hash"],
+            channel="Discord",
+            mef_score=int(entry.get("mef_score") or 80),
+        )
+    return result
+
+
 class MentorActionView(discord.ui.View):
     """Acciones tras respuesta del mentor — PDF solo ≥80%, métricas, expediente."""
 
-    def __init__(self, conv_key: tuple, show_pdf: bool = False, has_plan: bool = False):
+    def __init__(self, conv_key: tuple, show_pdf: bool = False, has_plan: bool = False, is_pro: bool = False):
         super().__init__(timeout=3600)
         self.conv_key = conv_key
         self.show_pdf = show_pdf
         self.has_plan = has_plan
-        for child in self.children:
+        from chain_service import chain_enabled as _chain_on, pdf_chain_enabled as _pdf_on
+        from discord_session import is_pro_confirmed
+
+        _ch_id, user_id, _is_dm = conv_key
+        self.is_pro = bool(is_pro and is_pro_confirmed(user_id))
+
+        for child in list(self.children):
             label = getattr(child, "label", "")
             if label == "PDF oficial MEF":
                 child.disabled = not show_pdf
+            elif label == "Atestiguar blockchain":
+                child.disabled = not (show_pdf and _chain_on())
+            elif label == "Firmar PDF":
+                child.disabled = not (show_pdf and _pdf_on() and self.is_pro)
             elif label == "Corregir plan":
                 child.disabled = not has_plan
 
@@ -689,8 +859,11 @@ class MentorActionView(discord.ui.View):
         if not self.show_pdf:
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        from discord_session import get_session
+        from discord_session import get_session, get_pro_settings
         from cedit_core import generate_plan_pdf, FreemiumLimitError
+        from chain_service import keccak256_pdf_hash, pdf_chain_enabled
+        from premium_store import record_pending_pdf_attestation
+        from cedit_channel_urls import build_channel_url
 
         ch_id, user_id, is_dm = self.conv_key
         sess = get_session(ch_id, user_id, is_dm)
@@ -701,7 +874,7 @@ class MentorActionView(discord.ui.View):
         try:
             sess.check_freemium("plan")
             meta = sess.get_audit_meta()
-            pdf_bytes, filename, doc_hash, _ = generate_plan_pdf(
+            pdf_bytes, filename, doc_hash, plan_score = generate_plan_pdf(
                 content,
                 title=f"Plan MEF — {sess.get_filename() or 'CEDIT'}",
                 project_name=sess.get_filename().replace(".pdf", "") if sess.get_filename() else "Proyecto CEDIT",
@@ -713,9 +886,35 @@ class MentorActionView(discord.ui.View):
                 source_document=meta.get("source_excerpt", ""),
             )
             sess.increment_audit("plan")
+            mef_est = int(plan_score.get("estimated_with_official_plan", 0) or 0)
+            pdf_keccak = keccak256_pdf_hash(pdf_bytes)
+            pro = get_pro_settings(user_id)
+            wallet = (pro.get("wallet") or "").strip()
+            firma_hint = ""
+            if (
+                mef_est >= 80
+                and plan_score.get("meets_expediente_threshold")
+                and pdf_chain_enabled()
+                and wallet.startswith("0x")
+            ):
+                channel_url = build_channel_url("Discord", discord_channel_id=ch_id)
+                record_pending_pdf_attestation(
+                    wallet,
+                    pdf_hash=pdf_keccak,
+                    mef_score=mef_est,
+                    channel_url=channel_url,
+                    channel="Discord",
+                    conversation_id=f"discord_{ch_id}_{user_id}",
+                )
+                sess.set_pending_pdf(pdf_keccak, mef_est)
+                firma_hint = (
+                    "\n\n📜 **Firma PDF on-chain disponible** — use el botón "
+                    "**Firmar PDF** (Plan Pro + contrato CeditFirmasPdf)."
+                )
             await interaction.followup.send(
                 embed=peru_embed(
-                    f"**Plan técnico oficial MEF** generado.\n\n🔗 `{doc_hash}`",
+                    f"**Plan técnico oficial MEF** generado.\n\n🔗 `{doc_hash}`\n"
+                    f"Keccak-256: `{pdf_keccak}`{firma_hint}",
                     requested_by=interaction.user,
                 ),
                 file=discord.File(io.BytesIO(pdf_bytes), filename=filename),
@@ -728,6 +927,147 @@ class MentorActionView(discord.ui.View):
             )
         except Exception as ex:
             await interaction.followup.send(f"Error al generar PDF: {ex}", ephemeral=True)
+
+    @discord.ui.button(
+        label="Firmar PDF",
+        style=discord.ButtonStyle.primary,
+        emoji="📜",
+        row=1,
+        disabled=True,
+    )
+    async def firmar_pdf(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from discord_guard import deny_if_not_owner
+        from discord_session import get_session, get_pro_settings
+        from chain_service import pdf_chain_enabled, get_chain_config
+
+        if await deny_if_not_owner(interaction, self.conv_key):
+            return
+        if not self.is_pro:
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Active **Plan Pro** con `/conectar_wallet` para firmar el PDF on-chain.",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        if not pdf_chain_enabled():
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Contrato **CeditFirmasPdf** no configurado (`CEDIT_PDF_CONTRACT_ADDRESS`).",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        ch_id, user_id, is_dm = self.conv_key
+        wallet = (get_pro_settings(user_id).get("wallet") or "").strip()
+        if not wallet.startswith("0x"):
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Indique su wallet: `/conectar_wallet wallet:0xSuDireccion`",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        sess = get_session(ch_id, user_id, is_dm)
+        try:
+            result = _mint_discord_pdf_firma(sess, user_id, wallet, ch_id)
+            cfg = get_chain_config()
+            pdf_url = cfg.get("pdf_contract_explorer_url") or ""
+            lines = [
+                f"✅ **PDF firmado on-chain** — NFT `#{result.get('token_id', '—')}`",
+                f"Hash Keccak-256: `{result.get('pdf_hash', '—')}`",
+                f"🔗 Tx: `{result.get('tx_hash', '—')}`",
+            ]
+            if result.get("explorer_tx"):
+                lines.append(f"[Transacción]({result['explorer_tx']})")
+            if result.get("explorer_nft"):
+                lines.append(f"[Ver NFT firma PDF]({result['explorer_nft']})")
+            if pdf_url:
+                lines.append(f"[Contrato CeditFirmasPdf]({pdf_url})")
+            await interaction.followup.send(
+                embed=peru_embed(
+                    "\n".join(lines),
+                    requested_by=interaction.user,
+                    title="📜 Firma PDF en blockchain",
+                ),
+                ephemeral=True,
+            )
+        except Exception as ex:
+            await interaction.followup.send(
+                embed=peru_embed(f"Error al firmar PDF: {ex}", requested_by=interaction.user),
+                ephemeral=True,
+            )
+
+    @discord.ui.button(
+        label="Atestiguar blockchain",
+        style=discord.ButtonStyle.danger,
+        emoji="⛓️",
+        row=1,
+        disabled=True,
+    )
+    async def mint_nft(self, interaction: discord.Interaction, button: discord.ui.Button):
+        from discord_guard import deny_if_not_owner
+        from chain_service import get_chain_config, chain_enabled
+        from discord_session import get_session, get_pro_settings
+
+        if await deny_if_not_owner(interaction, self.conv_key):
+            return
+        if not chain_enabled():
+            await interaction.response.send_message(
+                embed=peru_embed(
+                    "Blockchain no configurada en el servidor.",
+                    requested_by=interaction.user,
+                ),
+                ephemeral=True,
+            )
+            return
+        ch_id, user_id, is_dm = self.conv_key
+        pro = get_pro_settings(user_id)
+        wallet = (pro.get("wallet") or "").strip()
+        if self.is_pro and wallet.startswith("0x"):
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            sess = get_session(ch_id, user_id, is_dm)
+            try:
+                result = _mint_discord_conversation(sess, user_id, wallet)
+                lines = [
+                    f"✅ **Conversación atestiguada** — NFT `#{result.get('token_id', '—')}`",
+                    f"🔗 Tx: `{result.get('tx_hash', '—')}`",
+                ]
+                if result.get("explorer_tx"):
+                    lines.append(f"[Ver transacción]({result['explorer_tx']})")
+                if result.get("explorer_nft"):
+                    lines.append(f"[Ver NFT]({result['explorer_nft']})")
+                await interaction.followup.send(
+                    embed=peru_embed(
+                        "\n".join(lines),
+                        requested_by=interaction.user,
+                        title="⛓️ Atestiguar en blockchain",
+                    ),
+                    ephemeral=True,
+                )
+            except Exception as ex:
+                await interaction.followup.send(
+                    embed=peru_embed(f"Error al atestiguar: {ex}", requested_by=interaction.user),
+                    ephemeral=True,
+                )
+            return
+        cfg = get_chain_config()
+        contract_url = cfg.get("contract_explorer_url") or "https://explorer-zk.tanenbaum.io/"
+        await interaction.response.send_message(
+            embed=peru_embed(
+                "Acuñe la **atestación** de su conversación con:\n"
+                "`/mint_registro wallet:0xSuDireccion`\n\n"
+                f"Contrato **CeditRegistros:** [explorer]({contract_url})\n"
+                "Requisito: expediente **≥80%** MEF. Red: **zkTanenbaum Testnet**.",
+                requested_by=interaction.user,
+                title="⛓️ Atestiguar en blockchain",
+            ),
+            ephemeral=True,
+        )
 
     @discord.ui.button(
         label="Mis métricas",
