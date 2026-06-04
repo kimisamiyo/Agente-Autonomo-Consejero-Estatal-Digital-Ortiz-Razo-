@@ -1,0 +1,19 @@
+# Render Blueprint — API web (tier free puede dormir tras inactividad).
+# Bots 24/7: usar Fly.io (fly.bots.toml) o una VM Oracle; ver docs/DESPLIEGUE_GRATIS.md
+#
+# Conectar repo en https://dashboard.render.com → New → Blueprint
+
+services:
+  - type: web
+    name: cedit-api
+    runtime: python
+    rootDir: CEDIT
+    plan: free
+    buildCommand: pip install -r requirements-deploy.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      # Añadir en el panel de Render (Environment), no en git:
+      # GROQ_API_KEY, PINECONE_API_KEY, GROQ_MODEL, GROQ_MODEL_FALLBACK, etc.
