@@ -1,0 +1,14 @@
+CEDIT — Scripts
+===============
+
+0-CEDIT-Detener.bat          — libera API (puertos 8000/8001)
+1-CEDIT-Instalar.bat         — venv + pip + npm (una vez)
+2-CEDIT-Levantar.bat         — API, Web, Discord, n8n, Telegram
+
+3-CEDIT-Telegram.bat         — solo Telegram
+4-CEDIT-n8n.bat              — solo n8n
+
+WA-1-CEDIT-WhatsApp-Ayuda.bat — guia Meta (.env, webhook)
+WA-2-CEDIT-WhatsApp-Tunel.bat — tunnelmole (con API en :8001)
+
+6-CEDIT-Desplegar-Guia.bat   — despliegue en la nube

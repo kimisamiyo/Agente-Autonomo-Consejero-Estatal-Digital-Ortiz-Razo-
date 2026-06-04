@@ -3,25 +3,22 @@ chcp 65001 >nul
 setlocal EnableExtensions
 
 rem ============================================================
-rem  PASO 1 — Instalar CEDIT (venv + Python + frontend npm)
-rem  Doble clic tras clonar o hacer pull del repositorio.
+rem  PASO 1 — Instalar (venv → Python → frontend)
+rem  WhatsApp no requiere pasos extra aquí.
 rem ============================================================
 
-set "SCRIPTS=%~dp0"
-set "APP=%SCRIPTS%.."
-set "ROOT=%APP%\.."
-set "VENV=%ROOT%\venv"
-set "PY=%VENV%\Scripts\python.exe"
-set "PIP=%VENV%\Scripts\pip.exe"
-
+call "%~dp0_cedit_env.bat"
 cd /d "%ROOT%"
 
 echo.
-echo  [1/2] CEDIT — INSTALACION
+echo  [1/1] CEDIT — INSTALACION
 echo  ==========================
-echo  Carpeta raiz: %ROOT%
+echo  Raiz: %ROOT%
+echo  App:  %APP%
 echo.
 
+rem --- [1/4] Python / venv ---
+echo  [1/4] Entorno virtual Python...
 where py >nul 2>&1
 if errorlevel 1 goto :use_python
 py -3.12 -c "import sys" >nul 2>&1
@@ -31,7 +28,7 @@ goto :venv_create
 :use_python
 where python >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] No se encontro Python. Instale Python 3.11 o 3.12 desde python.org
+  echo [ERROR] No se encontro Python. Instale 3.11 o 3.12 desde python.org
   pause
   exit /b 1
 )
@@ -39,72 +36,74 @@ set "USE_PY=python"
 :venv_create
 
 if not exist "%PY%" (
-  echo  Creando entorno virtual en venv\ ...
-  %USE_PY% -m venv "%VENV%"
+  echo        Creando venv\ ...
+  %USE_PY% -m venv "%ROOT%\venv"
   if errorlevel 1 (
     echo [ERROR] No se pudo crear el venv.
     pause
     exit /b 1
   )
 )
+echo        OK - venv listo.
 
-echo  Actualizando pip ...
+rem --- [2/4] pip ---
+echo.
+echo  [2/4] Dependencias Python (API, Discord, Telegram, IA)...
+echo        Primera vez: 5-15 minutos.
 "%PY%" -m pip install --upgrade pip -q
-
-echo.
-echo  Instalando dependencias Python (API + Discord + IA)...
-echo  (La primera vez puede tardar 5-15 minutos)
-echo.
-
 "%PIP%" install ^
   discord.py python-telegram-bot python-dotenv pypdf fpdf2 ^
   langchain-groq langchain-huggingface langchain-pinecone langchain-core ^
   fastapi uvicorn python-multipart httpx requests ^
   sentence-transformers ^
   web3 eth-account
-
 if errorlevel 1 (
-  echo.
-  echo [ERROR] Fallo pip install. Revise internet o ejecute de nuevo.
+  echo [ERROR] Fallo pip install.
   pause
   exit /b 1
 )
+echo        OK - paquetes Python.
 
+rem --- [3/4] Verificar API ---
 echo.
-echo  Comprobando importacion del backend...
+echo  [3/4] Verificando api.py y .env ...
 cd /d "%APP%"
-"%PY%" -c "import api"
-if errorlevel 1 (
-  echo [AVISO] import api fallo. Revise .env y claves API en carpeta CEDIT.
-  goto :npm_block
+if not exist "%APP%\.env" (
+  echo [AVISO] No hay .env — copie .env.example a .env y complete claves.
 )
-echo  OK - api.py carga correctamente.
-
-:npm_block
-if not exist "%APP%\frontend\package.json" goto :done
-echo.
-echo  Instalando dependencias del frontend (npm)...
-cd /d "%APP%\frontend"
-where npm >nul 2>&1
+"%PY%" -c "import api" 2>nul
 if errorlevel 1 (
-  echo [AVISO] npm no encontrado. Instale Node.js LTS para la web en :5173
+  echo [AVISO] import api fallo. Revise .env en %APP%
+) else (
+  echo        OK - backend importa correctamente.
+)
+
+rem --- [4/4] npm frontend ---
+echo.
+echo  [4/4] Frontend (npm)...
+if not exist "%FRONT%\package.json" (
+  echo        Sin carpeta frontend — omitido.
   goto :done
 )
+where npm >nul 2>&1
+if errorlevel 1 (
+  echo [AVISO] npm no encontrado. Instale Node.js LTS para la web.
+  goto :done
+)
+cd /d "%FRONT%"
 call npm install
 if errorlevel 1 (
   echo [AVISO] npm install fallo. Ejecute manualmente en frontend\
 ) else (
-  echo  OK - frontend listo.
+  echo        OK - frontend listo.
 )
-cd /d "%APP%"
 
 :done
-
 echo.
 echo  ========================================
 echo  INSTALACION COMPLETA
-echo  Siguiente paso: doble clic en
-echo    scripts\2-CEDIT-Levantar-Todo.bat
+echo  Siguiente: scripts\2-CEDIT-Levantar.bat
+echo  WhatsApp (aparte): WA-1 luego WA-2 con API ya activa
 echo  ========================================
 echo.
 pause

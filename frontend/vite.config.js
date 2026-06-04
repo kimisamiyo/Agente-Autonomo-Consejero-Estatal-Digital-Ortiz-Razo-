@@ -15,7 +15,7 @@ export default defineConfig({
       },
       // Proxy para FastAPI (evita CORS en descargas/cargas de archivos)
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8001',
         changeOrigin: true,
       },
     },

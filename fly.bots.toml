@@ -1,0 +1,17 @@
+# Fly.io — Discord + Telegram (sin HTTP; proceso worker 24/7).
+# Uso: fly launch --config fly.bots.toml --copy-config --no-deploy
+#      fly secrets set DISCORD_TOKEN=... TELEGRAM_BOT_TOKEN=... GROQ_API_KEY=...
+#      fly deploy --config fly.bots.toml
+
+app = 'cedit-bots'
+primary_region = 'gru'
+
+[build]
+  dockerfile = 'Dockerfile.bots'
+
+# Sin http_service: la máquina ejecuta CMD de Dockerfile.bots (run_bots.py).
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

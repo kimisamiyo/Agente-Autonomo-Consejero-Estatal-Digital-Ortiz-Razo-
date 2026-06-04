@@ -185,6 +185,7 @@ async def _on_startup():
 
 @app.get("/api/health")
 async def health():
+    reload_groq_config()
     return {"status": "ok", "service": "CEDIT", "groq": groq_runtime_status()}
 
 

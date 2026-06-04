@@ -1,0 +1,30 @@
+# Fly.io — API web (siempre encendida en plan free dentro de créditos).
+# Uso: fly launch --config fly.api.toml --copy-config --no-deploy
+#      fly secrets set GROQ_API_KEY=... PINECONE_API_KEY=...  (ver .env.example)
+#      fly deploy --config fly.api.toml
+
+app = 'cedit-api'
+primary_region = 'gru'
+
+[build]
+  dockerfile = 'Dockerfile.api'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '120s'
+    method = 'GET'
+    path = '/api/health'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

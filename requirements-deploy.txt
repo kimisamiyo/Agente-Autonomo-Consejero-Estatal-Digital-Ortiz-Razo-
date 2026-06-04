@@ -1,0 +1,20 @@
+# Dependencias mínimas para despliegue (API + Discord + Telegram).
+# Instalar: pip install -r requirements-deploy.txt
+
+discord.py>=2.5.0
+python-telegram-bot>=21.0
+python-dotenv>=1.0.0
+pypdf>=4.0.0
+fpdf2>=2.7.0
+langchain-groq>=0.2.0
+langchain-huggingface>=0.1.0
+langchain-pinecone>=0.2.0
+langchain-core>=0.3.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+httpx>=0.27.0
+requests>=2.31.0
+sentence-transformers>=3.0.0
+web3>=6.0.0
+eth-account>=0.10.0

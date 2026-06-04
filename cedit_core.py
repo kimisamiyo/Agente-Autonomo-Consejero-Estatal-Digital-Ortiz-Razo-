@@ -574,8 +574,8 @@ _log("[CEDIT] Cargando embeddings y Pinecone...")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=embeddings)
 
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
-GROQ_MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "llama-3.1-8b-instant").strip()
+GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL_FALLBACK = "llama-3.1-8b-instant"
 # compound y llama-4-scout comparten el mismo TPD (500k/día) en Groq
 GROQ_SCOUT_TPD_MODELS = {
     m.strip()
@@ -629,19 +629,47 @@ def reset_groq_runtime() -> None:
     _llm_instances.clear()
 
 
+def _read_cedit_dotenv() -> Dict[str, str]:
+    """Lee CEDIT/.env directamente (evita otra variable de entorno o .env duplicado)."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    out: Dict[str, str] = {}
+    if not env_path.is_file():
+        return out
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        out[key.strip()] = val.strip()
+    return out
+
+
 def reload_groq_config() -> None:
-    """Recarga modelos desde .env (override) y limpia cooldowns/caché LLM."""
+    """Recarga modelos desde CEDIT/.env y limpia cooldowns/caché LLM."""
     global GROQ_MODEL, GROQ_MODEL_FALLBACK
-    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
-    GROQ_MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "llama-3.1-8b-instant").strip()
+    file_env = _read_cedit_dotenv()
+    GROQ_MODEL = (
+        file_env.get("GROQ_MODEL")
+        or os.getenv("GROQ_MODEL")
+        or "llama-3.1-8b-instant"
+    ).strip()
+    GROQ_MODEL_FALLBACK = (
+        file_env.get("GROQ_MODEL_FALLBACK")
+        or os.getenv("GROQ_MODEL_FALLBACK")
+        or "llama-3.1-8b-instant"
+    ).strip()
+    os.environ["GROQ_MODEL"] = GROQ_MODEL
+    os.environ["GROQ_MODEL_FALLBACK"] = GROQ_MODEL_FALLBACK
     reset_groq_runtime()
+
+
+reload_groq_config()
 
 
 def groq_runtime_status() -> Dict[str, Any]:
     now = time.time()
-    primary = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
-    fallback = os.getenv("GROQ_MODEL_FALLBACK", GROQ_MODEL_FALLBACK).strip() or GROQ_MODEL_FALLBACK
+    primary = GROQ_MODEL
+    fallback = GROQ_MODEL_FALLBACK
     cooldowns = {
         model: max(0, int(until - now))
         for model, until in _groq_model_cooldown_until.items()
@@ -650,6 +678,7 @@ def groq_runtime_status() -> Dict[str, Any]:
     return {
         "primary": primary,
         "fallback": fallback,
+        "env_file": str(Path(__file__).resolve().parent / ".env"),
         "cooldown_seconds": cooldowns,
     }
 
@@ -721,8 +750,7 @@ def _is_groq_fallback_worthy(exc: Exception) -> bool:
 
 def _groq_model_chain() -> List[str]:
     """Orden: principal → respaldo; omite modelos en cooldown por 429."""
-    primary = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
-    fallback = os.getenv("GROQ_MODEL_FALLBACK", GROQ_MODEL_FALLBACK).strip() or GROQ_MODEL_FALLBACK
+    primary, fallback = GROQ_MODEL, GROQ_MODEL_FALLBACK
     chain: List[str] = []
     seen = set()
     for model in (primary, fallback):

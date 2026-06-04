@@ -18,10 +18,10 @@ El entorno virtual está en la carpeta **padre** del proyecto:
 cd C:\Users\mayro\Downloads\CEDIT
 python -m venv venv
 cd CEDIT\scripts
-instalar-venv.bat
+1-CEDIT-Instalar.bat
 ```
 
-Si la ventana **CEDIT Discord** se cierra al instante, suele faltar `discord.py` u otra librería en el venv. `instalar-venv.bat` las instala.
+Si la ventana **CEDIT Discord** se cierra al instante, suele faltar `discord.py` u otra librería en el venv. `1-CEDIT-Instalar.bat` las instala.
 
 Luego arranque el bot manualmente para ver errores:
 
@@ -33,7 +33,7 @@ C:\Users\mayro\Downloads\CEDIT\venv\Scripts\python.exe bot.py
 Debe aparecer: `Shard ID None has connected to Gateway`. El `.env` necesita `DISCORD_TOKEN=...`.
 
 ### Proxy `/api/usage` ECONNREFUSED
-El frontend (5173) necesita la API en **8000**. Levanta `uvicorn` antes que `npm run dev`.
+El frontend (5173) necesita la API en **8001**. Usa `2-CEDIT-Levantar.bat` o levanta `uvicorn` antes que `npm run dev`.
 
 ### Discord `Command "buenas" is not found`
 Escribe consultas con **`!`** al inicio, por ejemplo: `! ¿Cuáles son mis derechos?`  
@@ -61,7 +61,7 @@ El flujo **no está activo** o no se importó el workflow.
 
 1. Importa y activa **primero** `CEDIT-02-Blockchain-Registro.json`, **después** `CEDIT-01-Entrada-Omnicanal.json`.
 2. Toggle **Active** (verde) en ambos → **Save**.
-3. FastAPI en puerto **8000**.
+3. FastAPI en puerto **8001**.
 4. El frontend usa `http://localhost:5173/n8n/chat` → proxy → `http://localhost:5678/webhook/cedit/chat` (con workflows activos).
 
 ### El toggle Active no pasa / se queda cargando
@@ -76,7 +76,7 @@ En la consola de n8n suele aparecer: `webhook "POST cedit/chat" is not registere
 
 1. El flujo **01 no está Active** (el botón *Execute workflow* en el editor **no** registra el webhook de producción).
 2. Arriba a la derecha del workflow: interruptor **Active** en verde → **Save**.
-3. Deben estar encendidos **uvicorn** (8000) y **n8n** (5678).
+3. Deben estar encendidos **uvicorn** (8001) y **n8n** (5678).
 4. La web llama `/n8n/chat` → `http://localhost:5678/webhook/cedit/chat`. Si n8n falla, la app usa `/api/chat` sola (necesita uvicorn).
 
 Comprueba en el navegador (con 01 Active): debe responder JSON, no 404.
@@ -94,8 +94,8 @@ Cada día a las **8:00** (configurable en n8n) revisa enlaces nuevos en
 https://www.gob.pe/institucion/mef/noticias
 
 1. Importa y activa `n8n/CEDIT-03-MEF-Noticias-Diarias.json` (con FastAPI encendido).
-2. Prueba: `POST http://127.0.0.1:8000/api/automation/mef-news/sync`
-3. Ver historial: `GET http://127.0.0.1:8000/api/automation/mef-news/latest`
+2. Prueba: `POST http://127.0.0.1:8001/api/automation/mef-news/sync`
+3. Ver historial: `GET http://127.0.0.1:8001/api/automation/mef-news/latest`
 
 Detalle en `n8n/README.md`.
 
@@ -107,17 +107,18 @@ Detalle en `n8n/README.md`.
 
 ```cmd
 cd C:\Users\mayro\Downloads\CEDIT\CEDIT\scripts
-iniciar-cedit.bat
+2-CEDIT-Levantar.bat
 ```
 
-Abre **4 ventanas** separadas:
+Abre **5 ventanas** (WhatsApp aparte: `WA-2`):
 
 | Ventana | Servicio | URL / notas |
 |---------|----------|-------------|
-| **CEDIT API :8000** | Backend FastAPI (`uvicorn`) | http://127.0.0.1:8000 |
+| **1-CEDIT-API-8001** | Backend FastAPI (`uvicorn`) | http://127.0.0.1:8001 |
 | **CEDIT Web :5173** | Frontend React (Vite) | http://127.0.0.1:5173 |
 | **CEDIT Discord** | Bot Discord (`bot.py`) | Requiere token en `.env` |
-| **CEDIT n8n :5678** | Automatización / webhooks | http://127.0.0.1:5678 — Active flujos 02 y 01 |
+| **4-CEDIT-n8n** | Automatización / webhooks | http://127.0.0.1:5678 — Active flujos 02 y 01 |
+| **5-CEDIT-Telegram** | Bot Telegram | Token en `.env` |
 
 ### Manual (si prefiere una terminal por servicio)
 
