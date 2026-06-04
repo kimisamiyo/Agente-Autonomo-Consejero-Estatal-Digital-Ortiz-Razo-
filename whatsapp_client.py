@@ -61,7 +61,7 @@ def send_text(to_wa_id: str, body: str) -> bool:
                 json=payload,
             )
             if r.status_code >= 400:
-                log.error("WhatsApp send error %s: %s", r.status_code, r.text)
+                log.error("WhatsApp send error %s to %s: %s", r.status_code, to_wa_id, r.text[:400])
                 return False
             return True
     except Exception as ex:
@@ -102,12 +102,12 @@ def download_media(media_id: str) -> Optional[bytes]:
         return None
 
 
-def mark_read(message_id: str) -> None:
+def mark_read(message_id: str) -> bool:
     if not is_configured() or not message_id:
-        return
+        return False
     try:
         with httpx.Client(timeout=15.0) as client:
-            client.post(
+            r = client.post(
                 _graph_url("messages"),
                 headers={"Authorization": f"Bearer {_token()}"},
                 json={
@@ -116,5 +116,10 @@ def mark_read(message_id: str) -> None:
                     "message_id": message_id,
                 },
             )
-    except Exception:
-        pass
+            if r.status_code >= 400:
+                log.warning("WhatsApp mark_read %s: %s", r.status_code, r.text[:300])
+                return False
+            return True
+    except Exception as ex:
+        log.warning("WhatsApp mark_read failed: %s", ex)
+        return False

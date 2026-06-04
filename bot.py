@@ -27,6 +27,7 @@ from cedit_core import (
     FreemiumLimitError,
     detect_input_mode,
     consumes_freemium_credit,
+    public_llm_error_message,
 )
 from discord_mentor import is_mentor_mode, pdf_lock_reason, mentor_chat_body
 from discord_session import get_session, activate_pro_user, get_pro_settings
@@ -497,7 +498,7 @@ async def slash_auditar(interaction: discord.Interaction, consulta: str):
             view=ResetMemoryConfirmView(_conv_key(interaction.channel_id, interaction.user.id, is_dm)),
         )
     except Exception as e:
-        await interaction.followup.send(f"Error: {e}")
+        await interaction.followup.send(f"Error: {public_llm_error_message(e)}")
 
 
 @bot.tree.command(name="plan", description="Generar PDF técnico MEF (solo si métricas ≥80%)")
@@ -550,7 +551,7 @@ async def slash_plan(interaction: discord.Interaction):
             view=ResetMemoryConfirmView(_conv_key(interaction.channel_id, interaction.user.id, is_dm)),
         )
     except Exception as e:
-        await interaction.followup.send(f"Error: {e}")
+        await interaction.followup.send(f"Error: {public_llm_error_message(e)}")
 
 
 @bot.tree.command(name="corregir", description="Corregir el último plan según tus indicaciones")
@@ -591,7 +592,7 @@ async def slash_corregir(interaction: discord.Interaction, solicitud: str):
             view=ResetMemoryConfirmView(_conv_key(interaction.channel_id, interaction.user.id, is_dm)),
         )
     except Exception as e:
-        await interaction.followup.send(f"Error: {e}")
+        await interaction.followup.send(f"Error: {public_llm_error_message(e)}")
 
 
 async def process_user_message(message: discord.Message, text: str):
@@ -668,7 +669,7 @@ async def process_user_message(message: discord.Message, text: str):
                     mention_author=False,
                 )
             except Exception as e:
-                await message.reply(f"Error al auditar: {e}", mention_author=False)
+                await message.reply(f"Error al auditar: {public_llm_error_message(e)}", mention_author=False)
             return
 
         if not text:
@@ -709,7 +710,7 @@ async def process_user_message(message: discord.Message, text: str):
             mention_author=False,
         )
     except Exception as e:
-        await message.reply(f"Error: {e}", mention_author=False)
+        await message.reply(f"Error: {public_llm_error_message(e)}", mention_author=False)
     finally:
         _release_message(message.id)
 

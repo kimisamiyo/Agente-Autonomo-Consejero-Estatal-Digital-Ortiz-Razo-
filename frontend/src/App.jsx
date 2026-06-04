@@ -124,6 +124,8 @@ function App() {
   const [premiumName, setPremiumName] = useState(() => localStorage.getItem(STORAGE_NAME) || '');
   const [isPremium, setIsPremium] = useState(false);
   const [activeView, setActiveView] = useState('chat');
+  const [expedientesRefreshKey, setExpedientesRefreshKey] = useState(0);
+  const [highlightExpId, setHighlightExpId] = useState('');
   const [userSettings, setUserSettings] = useState(() => loadSettings());
 
   const userId = getUserId();
@@ -136,6 +138,13 @@ function App() {
 
   /** Plan Pro confirmado por API (activate + /usage con is_pro) */
   const proActive = Boolean(walletAddress?.trim()) && isPremium;
+
+  const handlePdfExpedienteSaved = useCallback((exp) => {
+    setExpedientesRefreshKey((k) => k + 1);
+    setHighlightExpId(exp?.id || '');
+    setActiveView('expedientes');
+    if (window.innerWidth < 768) setIsSidebarOpen(false);
+  }, []);
 
   const linkWalletSession = useCallback(
     async (address) => {
@@ -742,7 +751,19 @@ function App() {
         {activeView === 'settings' && (
           <SettingsView settings={userSettings} onSettingsChange={setUserSettings} />
         )}
-        {activeView === 'expedientes' && <ExpedientesView />}
+        {activeView === 'expedientes' && (
+          <ExpedientesView
+            refreshKey={expedientesRefreshKey}
+            highlightExpId={highlightExpId}
+            walletAddress={walletAddress}
+            isPremium={proActive}
+            userId={userId}
+            apiHeaders={apiHeaders}
+            onOpenPremium={() => {
+              setPremiumOpen(true);
+            }}
+          />
+        )}
         {activeView === 'normativas' && (
           <NormativasView
             onConsultNormativa={(prompt) => {
@@ -815,6 +836,7 @@ function App() {
             }}
             onRequestResetMemory={() => setGateModal({ open: true, mode: 'reset' })}
             apiHeaders={apiHeaders}
+            onPdfExpedienteSaved={handlePdfExpedienteSaved}
             decisionCheckpoints={decisionCheckpoints}
             nodePositions={nodePositions}
             activeCheckpointId={activeCheckpointId}

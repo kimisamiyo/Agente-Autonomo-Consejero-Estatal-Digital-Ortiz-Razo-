@@ -1,10 +1,11 @@
 import os
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
 from langchain_core.prompts import ChatPromptTemplate
+
+from cedit_core import invoke_llm
 
 load_dotenv()
 
@@ -15,11 +16,6 @@ def iniciar_chat():
     nombre_index = "agenteautonomo-ortiz"
     vectorstore = PineconeVectorStore(index_name=nombre_index, embedding=embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-
-    llm = ChatGroq(
-        temperature=0.2, 
-        model_name="meta-llama/llama-4-scout-17b-16e-instruct"
-    )
 
     system_prompt = (
         "Eres el 'Consejero Estatal Digital', un asesor público virtual al servicio del pueblo peruano.\n\n"
@@ -66,7 +62,7 @@ def iniciar_chat():
             contexto_str = "\n\n".join([doc.page_content for doc in docs])
             
             messages = prompt.format_messages(context=contexto_str, input=pregunta)
-            respuesta = llm.invoke(messages)
+            respuesta = invoke_llm(messages)
             
             print(f"\n⚪ Consejero: {respuesta.content}")
             

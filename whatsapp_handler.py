@@ -123,8 +123,9 @@ def _handle_command(sess, wa_id: str, cmd: str) -> bool:
     return False
 
 
-def process_text_message(wa_id: str, text: str, message_id: str = "") -> None:
-    mark_read(message_id)
+def process_text_message(wa_id: str, text: str, message_id: str = "", *, skip_mark_read: bool = False) -> None:
+    if not skip_mark_read:
+        mark_read(message_id)
     sess = get_whatsapp_session(wa_id)
     raw = (text or "").strip()
     if not raw:
@@ -187,8 +188,11 @@ def process_document_message(
     filename: str,
     caption: str = "",
     message_id: str = "",
+    *,
+    skip_mark_read: bool = False,
 ) -> None:
-    mark_read(message_id)
+    if not skip_mark_read:
+        mark_read(message_id)
     sess = get_whatsapp_session(wa_id)
     send_text(wa_id, md_to_whatsapp("📄 Recibí su documento. Revisando ante normativa MEF…"))
 
@@ -241,6 +245,8 @@ def extract_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for entry in payload.get("entry") or []:
         for change in entry.get("changes") or []:
+            if change.get("field") and change.get("field") != "messages":
+                continue
             value = change.get("value") or {}
             for msg in value.get("messages") or []:
                 wa_id = msg.get("from", "")
@@ -260,6 +266,12 @@ def extract_messages(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
                 elif msg_type == "button":
                     item["text"] = (msg.get("button") or {}).get("text", "")
                     out.append(item)
+                elif msg_type == "interactive":
+                    inter = msg.get("interactive") or {}
+                    btn = inter.get("button_reply") or inter.get("list_reply") or {}
+                    item["text"] = btn.get("title") or btn.get("id") or ""
+                    if item["text"]:
+                        out.append(item)
     return out
 
 
@@ -270,15 +282,21 @@ def handle_webhook_payload(payload: Dict[str, Any]) -> None:
         wa_id = msg.get("wa_id")
         if not wa_id:
             continue
-        if msg.get("type") == "document":
-            process_document_message(
-                wa_id,
-                msg.get("media_id", ""),
-                msg.get("filename", "documento.pdf"),
-                msg.get("caption", ""),
-                msg.get("message_id", ""),
-            )
-        else:
-            text = msg.get("text", "")
-            if text:
-                process_text_message(wa_id, text, msg.get("message_id", ""))
+        try:
+            if msg.get("type") == "document":
+                process_document_message(
+                    wa_id,
+                    msg.get("media_id", ""),
+                    msg.get("filename", "documento.pdf"),
+                    msg.get("caption", ""),
+                    msg.get("message_id", ""),
+                    skip_mark_read=True,
+                )
+            else:
+                text = msg.get("text", "")
+                if text:
+                    process_text_message(
+                        wa_id, text, msg.get("message_id", ""), skip_mark_read=True
+                    )
+        except Exception as ex:
+            log.exception("WhatsApp mensaje no procesado (%s): %s", wa_id, ex)

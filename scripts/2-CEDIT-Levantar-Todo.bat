@@ -34,6 +34,7 @@ echo.
 echo  [2/2] CEDIT — LEVANTAR TODO
 echo  ===========================
 echo  Orden de arranque:
+echo    [0] Si la API falla: scripts\0-CEDIT-Detener-API.bat
 echo    [1] API Backend    http://127.0.0.1:8000
 echo    [2] Web Frontend   http://127.0.0.1:5173
 echo    [3] Bot Discord    bot.py
@@ -45,7 +46,7 @@ echo  n8n: importe flujos CEDIT-02 y CEDIT-01 y Active (verde)
 echo.
 
 rem --- [1] API (debe ir primero: el chat usa /api) ---
-start "1-CEDIT-API-8000" cmd /k "cd /d "%APP%" && title 1-CEDIT-API-8000 && echo [1] Backend FastAPI - http://127.0.0.1:8000 && echo Carpeta: %APP% && "%PY%" -m uvicorn api:app --reload --host 127.0.0.1 --port 8000"
+start "1-CEDIT-API-8000" cmd /k "cd /d "%APP%" && title 1-CEDIT-API-8000 && echo [1] Backend FastAPI - http://127.0.0.1:8000 && echo Carpeta: %APP% && "%PY%" -m uvicorn api:app --host 127.0.0.1 --port 8000"
 
 timeout /t 4 /nobreak >nul 2>nul
 

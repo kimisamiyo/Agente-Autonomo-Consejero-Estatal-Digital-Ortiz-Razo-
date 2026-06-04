@@ -10,6 +10,10 @@ export function loadExpedientes() {
   }
 }
 
+function persist(list) {
+  localStorage.setItem(STORE_KEY, JSON.stringify(list));
+}
+
 export function saveExpediente(entry) {
   const list = loadExpedientes();
   const item = {
@@ -19,17 +23,47 @@ export function saveExpediente(entry) {
     score: entry.score ?? 0,
     docScore: entry.docScore ?? 0,
     hash: entry.hash || '',
+    pdfKeccak: entry.pdfKeccak || '',
+    conversationId: entry.conversationId || '',
+    firmaPending: Boolean(entry.firmaPending),
+    pdfFirmaTokenId: entry.pdfFirmaTokenId ?? null,
+    pdfFirmaTx: entry.pdfFirmaTx || '',
+    pdfFirmaExplorerTx: entry.pdfFirmaExplorerTx || '',
+    pdfFirmaContract: entry.pdfFirmaContract || '',
     createdAt: entry.createdAt || new Date().toISOString(),
     pdfLanguage: entry.pdfLanguage || 'es',
   };
   const filtered = list.filter((e) => e.id !== item.id);
   const next = [item, ...filtered].slice(0, 50);
-  localStorage.setItem(STORE_KEY, JSON.stringify(next));
+  persist(next);
   return item;
+}
+
+export function updateExpedienteFirma(id, firma) {
+  const list = loadExpedientes();
+  let updated = null;
+  const next = list.map((e) => {
+    if (e.id !== id) return e;
+    updated = {
+      ...e,
+      firmaPending: false,
+      pdfFirmaTokenId: firma.token_id ?? firma.pdfFirmaTokenId ?? null,
+      pdfFirmaTx: firma.tx_hash || firma.pdfFirmaTx || '',
+      pdfFirmaExplorerTx: firma.explorer_tx || firma.pdfFirmaExplorerTx || '',
+      pdfFirmaContract: firma.contract_address || firma.pdfFirmaContract || '',
+    };
+    return updated;
+  });
+  if (updated) persist(next);
+  return updated;
 }
 
 export function listQualifiedExpedientes(minScore = MEF_THRESHOLD) {
   return loadExpedientes()
     .filter((e) => (e.score ?? 0) >= minScore)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+export function needsPdfFirma(exp) {
+  return Boolean(exp?.pdfKeccak && exp?.firmaPending && !exp?.pdfFirmaTokenId);
 }

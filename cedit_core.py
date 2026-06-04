@@ -7,7 +7,10 @@ import json
 import re
 import hashlib
 import datetime
+import time
 from typing import List, Dict, Optional, Tuple, Any
+
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fpdf import FPDF
@@ -30,7 +33,7 @@ from guide_engine import (
     CoachingPhase,
 )
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 FREE_LIMIT = int(os.getenv("CEDIT_FREE_LIMIT", "10"))
 USAGE_FILE = os.path.join(os.path.dirname(__file__), ".cedit_usage.json")
@@ -416,7 +419,7 @@ DOCUMENTO:
         HumanMessage(content="Eres auditor MEF. Solo JSON, sin texto extra."),
         HumanMessage(content=score_prompt),
     ]
-    raw = llm.invoke(messages).content
+    raw = invoke_llm(messages).content
     parsed = _parse_score_json(raw)
     if not parsed.get("risk_level"):
         parsed["risk_level"] = risk_level_from_index(int(parsed.get("risk_index", 50)))
@@ -571,7 +574,251 @@ _log("[CEDIT] Cargando embeddings y Pinecone...")
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=embeddings)
 
-llm = ChatGroq(temperature=0.2, model_name="meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+GROQ_MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "llama-3.1-8b-instant").strip()
+# compound y llama-4-scout comparten el mismo TPD (500k/día) en Groq
+GROQ_SCOUT_TPD_MODELS = {
+    m.strip()
+    for m in os.getenv(
+        "GROQ_SCOUT_TPD_MODELS",
+        "groq/compound,meta-llama/llama-4-scout-17b-16e-instruct",
+    ).split(",")
+    if m.strip()
+}
+GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
+GROQ_DEBUG = os.getenv("GROQ_DEBUG", "").strip().lower() in ("1", "true", "yes")
+GROQ_MAX_SYSTEM_CHARS = int(os.getenv("GROQ_MAX_SYSTEM_CHARS", "6000"))
+GROQ_MAX_RAG_CHARS = int(os.getenv("GROQ_MAX_RAG_CHARS", "2000"))
+
+_llm_instances: Dict[str, ChatGroq] = {}
+_groq_model_cooldown_until: Dict[str, float] = {}
+
+
+def _parse_groq_retry_seconds(exc: Exception) -> Optional[float]:
+    text = str(exc)
+    m = re.search(r"try again in (\d+)m([\d.]+)s", text, re.I)
+    if m:
+        return int(m.group(1)) * 60 + float(m.group(2))
+    m2 = re.search(r"try again in ([\d.]+)s", text, re.I)
+    if m2:
+        return float(m2.group(1))
+    return None
+
+
+def _mark_groq_model_cooldown(model: str, exc: Exception) -> None:
+    if not _is_groq_rate_limit(exc):
+        return
+    wait = _parse_groq_retry_seconds(exc) or 1800.0
+    until = time.time() + wait
+    _groq_model_cooldown_until[model] = until
+    text = str(exc).lower()
+    if "llama-4-scout" in text or "llama-scout" in text:
+        for shared in GROQ_SCOUT_TPD_MODELS:
+            _groq_model_cooldown_until[shared] = until
+    if GROQ_DEBUG:
+        _log(f"[CEDIT] Cooldown {model} ~{int(wait)}s por límite Groq")
+
+
+def _groq_model_available(model: str) -> bool:
+    return time.time() >= _groq_model_cooldown_until.get(model, 0.0)
+
+
+def reset_groq_runtime() -> None:
+    """Limpia cooldowns y caché LLM (p. ej. al reiniciar uvicorn)."""
+    _groq_model_cooldown_until.clear()
+    _llm_instances.clear()
+
+
+def reload_groq_config() -> None:
+    """Recarga modelos desde .env (override) y limpia cooldowns/caché LLM."""
+    global GROQ_MODEL, GROQ_MODEL_FALLBACK
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    GROQ_MODEL_FALLBACK = os.getenv("GROQ_MODEL_FALLBACK", "llama-3.1-8b-instant").strip()
+    reset_groq_runtime()
+
+
+def groq_runtime_status() -> Dict[str, Any]:
+    now = time.time()
+    primary = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
+    fallback = os.getenv("GROQ_MODEL_FALLBACK", GROQ_MODEL_FALLBACK).strip() or GROQ_MODEL_FALLBACK
+    cooldowns = {
+        model: max(0, int(until - now))
+        for model, until in _groq_model_cooldown_until.items()
+        if until > now
+    }
+    return {
+        "primary": primary,
+        "fallback": fallback,
+        "cooldown_seconds": cooldowns,
+    }
+
+
+def _get_groq_llm(model_name: str) -> ChatGroq:
+    if model_name not in _llm_instances:
+        _llm_instances[model_name] = ChatGroq(temperature=GROQ_TEMPERATURE, model_name=model_name)
+    return _llm_instances[model_name]
+
+
+def _is_groq_rate_limit(exc: Exception) -> bool:
+    text = str(exc).lower()
+    if any(
+        k in text
+        for k in (
+            "429",
+            "rate_limit",
+            "rate limit",
+            "tokens per day",
+            "rate_limit_exceeded",
+            "quota",
+            "too many requests",
+        )
+    ):
+        return True
+    status = _groq_http_status(exc)
+    if status == 429:
+        return True
+    code = getattr(exc, "code", None)
+    if code in ("rate_limit_exceeded", "tokens"):
+        return True
+    return False
+
+
+def _groq_http_status(exc: Exception) -> Optional[int]:
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        return int(status)
+    response = getattr(exc, "response", None)
+    if response is not None:
+        return getattr(response, "status_code", None)
+    text = str(exc)
+    for code in (403, 404, 429, 503):
+        if f"error code: {code}" in text.lower() or f" {code} " in f" {text} ":
+            return code
+    return None
+
+
+def _is_groq_fallback_worthy(exc: Exception) -> bool:
+    """Errores donde conviene probar el otro modelo sin avisar al usuario."""
+    if _is_groq_rate_limit(exc):
+        return True
+    text = str(exc).lower()
+    if any(
+        k in text
+        for k in (
+            "permissions_error",
+            "blocked at the project",
+            "model_not_found",
+            "does not exist",
+            "decommissioned",
+            "not supported",
+        )
+    ):
+        return True
+    status = _groq_http_status(exc)
+    return status in (403, 404, 503)
+
+
+def _groq_model_chain() -> List[str]:
+    """Orden: principal → respaldo; omite modelos en cooldown por 429."""
+    primary = os.getenv("GROQ_MODEL", GROQ_MODEL).strip() or GROQ_MODEL
+    fallback = os.getenv("GROQ_MODEL_FALLBACK", GROQ_MODEL_FALLBACK).strip() or GROQ_MODEL_FALLBACK
+    chain: List[str] = []
+    seen = set()
+    for model in (primary, fallback):
+        if model and model not in seen and _groq_model_available(model):
+            chain.append(model)
+            seen.add(model)
+    return chain
+
+
+def invoke_llm(messages):
+    """Groq con fallback transparente; cooldown solo por modelo que recibió 429."""
+    chain = _groq_model_chain()
+    if not chain:
+        raise RuntimeError(
+            "Los modelos de IA están temporalmente al límite. Espera unos minutos e inténtalo de nuevo."
+        )
+
+    last_err: Optional[Exception] = None
+    for i, model in enumerate(chain):
+        try:
+            if GROQ_DEBUG and i > 0:
+                _log(f"[CEDIT] Groq fallback → {model}")
+            result = _get_groq_llm(model).invoke(messages)
+            if model == GROQ_MODEL and GROQ_MODEL in _groq_model_cooldown_until:
+                _groq_model_cooldown_until.pop(GROQ_MODEL, None)
+            return result
+        except Exception as ex:
+            last_err = ex
+            _mark_groq_model_cooldown(model, ex)
+            if _is_groq_fallback_worthy(ex) and i + 1 < len(chain):
+                next_model = chain[i + 1]
+                if _rate_limit_blocks_model(ex, next_model):
+                    if GROQ_DEBUG:
+                        _log(f"[CEDIT] Misma cuota TPD en {next_model}, sin segundo intento.")
+                    raise
+                if GROQ_DEBUG:
+                    _log(f"[CEDIT] {model} no disponible, probando {next_model}…")
+                continue
+            raise
+    if last_err:
+        raise last_err
+    raise RuntimeError("No hay modelos Groq configurados (GROQ_MODEL).")
+
+
+def public_llm_error_message(exc: Exception) -> str:
+    """Mensaje seguro para web/Discord: nunca expone modelos Groq ni códigos API."""
+    if isinstance(exc, RuntimeError) and "temporalmente al límite" in str(exc):
+        return (
+            "El asistente está con mucha demanda en este momento. "
+            "Espera unos minutos e inténtalo de nuevo."
+        )
+    if _is_groq_rate_limit(exc):
+        return (
+            "El asistente está con mucha demanda en este momento. "
+            "Espera unos minutos e inténtalo de nuevo."
+        )
+    text = str(exc).lower()
+    if "blocked at the project" in text or "permissions_error" in text:
+        return "No pudimos procesar tu solicitud ahora. Inténtalo de nuevo en unos instantes."
+    if any(
+        x in text
+        for x in (
+            "groq",
+            "llama-4-scout",
+            "llama-scout",
+            "meta-llama",
+            "rate_limit",
+            "tokens per day",
+            "error code: 429",
+            "error code: 403",
+            "gpt-oss",
+        )
+    ):
+        return "No pudimos procesar tu solicitud ahora. Inténtalo de nuevo en unos instantes."
+    return str(exc)
+
+
+# Compatibilidad con imports legacy
+llm = _get_groq_llm(GROQ_MODEL)
+
+
+def _cap_rag_context(text: str, max_chars: Optional[int] = None) -> str:
+    limit = max_chars if max_chars is not None else GROQ_MAX_RAG_CHARS
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n\n[... contexto normativo truncado ...]"
+
+
+def _rate_limit_blocks_model(exc: Exception, model: str) -> bool:
+    """True si el 429 ya aplica al modelo de respaldo (misma cuota TPD)."""
+    if not model or not _is_groq_rate_limit(exc):
+        return False
+    text = str(exc).lower()
+    slug = model.lower()
+    short = slug.split("/")[-1]
+    return slug in text or short in text
 
 
 def _escape_langchain_system_template(text: str, allowed_vars: Optional[Tuple[str, ...]] = ("context",)) -> str:
@@ -582,36 +829,63 @@ def _escape_langchain_system_template(text: str, allowed_vars: Optional[Tuple[st
     return escaped
 
 
-def load_cognitive_architecture() -> str:
+AGENT_MIND_FULL_FILES = [
+    "master.md",
+    "soul.md",
+    "soul_extended.md",
+    "instinct.md",
+    "vision.md",
+    "plan.md",
+    "decision_graph.md",
+    "decision_graph_extended.md",
+]
+AGENT_MIND_CHAT_FILES = [
+    "master.md",
+    "soul.md",
+    "instinct.md",
+    "plan.md",
+]
+
+
+def load_cognitive_architecture(
+    files: Optional[List[str]] = None,
+    max_chars: Optional[int] = None,
+) -> str:
     mind_dir = os.path.join(os.path.dirname(__file__), "agent_mind")
-    files = [
-        "master.md",
-        "soul.md",
-        "soul_extended.md",
-        "instinct.md",
-        "vision.md",
-        "plan.md",
-        "decision_graph.md",
-        "decision_graph_extended.md",
-    ]
+    file_list = files or AGENT_MIND_FULL_FILES
+    cap = max_chars if max_chars is not None else GROQ_MAX_SYSTEM_CHARS
     prompt_parts = []
-    for f in files:
+    for f in file_list:
         path = os.path.join(mind_dir, f)
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as file:
                 prompt_parts.append(file.read())
     base = "\n\n".join(prompt_parts)
+    if len(base) > cap:
+        base = (
+            base[:cap]
+            + "\n\n[... memoria del agente recortada para cumplir límites Groq; prioriza normativa y guía MEF ...]"
+        )
     raw = base + "\n\nContexto normativo encontrado:\n{context}"
     return _escape_langchain_system_template(raw)
 
 
-SYSTEM_PROMPT_TEXT = load_cognitive_architecture()
+def _make_chat_prompt_template(system_text: str) -> ChatPromptTemplate:
+    return ChatPromptTemplate.from_messages([
+        ("system", system_text),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+    ])
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM_PROMPT_TEXT),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-])
+
+SYSTEM_PROMPT_TEXT = load_cognitive_architecture()
+CHAT_SYSTEM_PROMPT_TEXT = load_cognitive_architecture(
+    AGENT_MIND_CHAT_FILES,
+    max_chars=min(GROQ_MAX_SYSTEM_CHARS, 7000),
+)
+
+prompt = _make_chat_prompt_template(SYSTEM_PROMPT_TEXT)
+chat_prompt = _make_chat_prompt_template(CHAT_SYSTEM_PROMPT_TEXT)
 
 CEDIT_IDENTITY_FIRST_TURN_ES = """
 IDENTIDAD — Primer turno (NO te presentes a menos que te pregunten quién eres):
@@ -1055,7 +1329,7 @@ def _generate_pdf_sections_chunked(digest: str, project_name: str, normative_ctx
             HumanMessage(content=system_msg),
             HumanMessage(content=chunk_prompt),
         ]
-        section_text = llm.invoke(messages).content.strip()
+        section_text = invoke_llm(messages).content.strip()
         if not section_text.lower().startswith("##"):
             section_text = f"## {num}. {title}\n\n{section_text}"
         sections_out.append(section_text)
@@ -1177,7 +1451,7 @@ def run_chat(
         check_freemium(scope, "audit")
 
     docs = vectorstore.similarity_search(message, k=3)
-    contexto = "\n\n".join([d.page_content for d in docs])
+    contexto = _cap_rag_context("\n\n".join([d.page_content for d in docs]))
 
     prefix_instructions = cedit_identity_instruction(history, message, locale)
     if (canal or "").lower() == "whatsapp":
@@ -1218,12 +1492,12 @@ def run_chat(
     )
 
     history_limit = 12 if (canal or "").lower() == "discord" else 6
-    messages = prompt.format_messages(
+    messages = chat_prompt.format_messages(
         context=contexto,
         chat_history=_format_history(history, limit=history_limit),
         input=formatted_input,
     )
-    respuesta = llm.invoke(messages)
+    respuesta = invoke_llm(messages)
     content = sanitize_mentor_response(respuesta.content or "")
     response_mode = detect_response_mode(content, is_audit=(mode == "audit"))
     if mode in ("audit", "plan"):
@@ -1318,7 +1592,7 @@ def run_audit_pdf(
         text[1200:2400] if len(text) > 1200 else "",
         user_text or "auditoría plan inversión pública MEF Invierte.pe",
     ]
-    contexto = _gather_normative_context([q for q in rag_queries if q], k=3)
+    contexto = _cap_rag_context(_gather_normative_context([q for q in rag_queries if q], k=3))
     guide_state = assess_guide_state(text, history, has_pdf=True)
 
     user_note = f"\nComentario del usuario: {user_text}" if user_text.strip() else ""
@@ -1335,12 +1609,12 @@ def run_audit_pdf(
         f"{AUDIT_STRUCTURE_INSTRUCTION}"
     )
 
-    messages = prompt.format_messages(
+    messages = chat_prompt.format_messages(
         context=contexto,
         chat_history=_format_history(history or [], limit=4),
         input=pregunta,
     )
-    respuesta = llm.invoke(messages)
+    respuesta = invoke_llm(messages)
     content = respuesta.content
     gaps = detect_project_data_gaps(text, history)
     if guide_state.phase.value < CoachingPhase.EVALUAR_RIESGO.value:
@@ -1414,7 +1688,7 @@ def run_refine_plan(
         chat_history=_format_history(history or [], limit=4),
         input=refine_prompt,
     )
-    respuesta = llm.invoke(messages)
+    respuesta = invoke_llm(messages)
     content = respuesta.content
     usage = get_usage(scope)
     if not skip_usage:
@@ -1600,7 +1874,7 @@ def generate_plan_pdf(
         )
         ctx = _gather_normative_context([modifications], k=2)
         messages = prompt.format_messages(context=ctx, chat_history=[], input=mod_prompt)
-        content = llm.invoke(messages).content
+        content = invoke_llm(messages).content
 
     digest = _build_conversation_digest(
         history,

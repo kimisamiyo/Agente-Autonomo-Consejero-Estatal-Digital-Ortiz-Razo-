@@ -1,6 +1,67 @@
 {
   "0x06f907eb3c4fbeb62ab29faffb90d330e2b45083": [
     {
+      "token_id": 6,
+      "channel": "Discord",
+      "saved_at": "2026-06-03T21:30:01.266456",
+      "messages": [
+        {
+          "role": "user",
+          "content": "holi como estas"
+        },
+        {
+          "role": "assistant",
+          "content": "¡Hola! ¿En qué puedo ayudarle hoy? Si tiene alguna duda sobre un trámite o proceso del Estado, o si necesita orientación para un proyecto, estoy aquí para guiarle. ¿Qué le preocupa o qué necesita resolver?"
+        }
+      ]
+    },
+    {
+      "token_id": 5,
+      "channel": "Web",
+      "saved_at": "2026-06-03T21:23:25.506487",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hola como estas me gustaria ayuda en crear un plan porfavor"
+        },
+        {
+          "role": "assistant",
+          "content": "¡Hola! ¿En qué puedo ayudarle hoy? Si tiene alguna duda sobre un trámite o proceso del Estado, o si necesita orientación para un proyecto, estoy aquí para guiarle.\n\n## Mi opinión como CEDIT\nEntiendo que está buscando ayuda para crear un plan, pero no tengo claro qué tipo de plan se trata. ¿Podría decirme un poco más sobre su idea o problema?\n\n## Cómo va tomando forma su idea\nUsted planteó la creación de un plan, pero aún no tengo claro qué tipo de proyecto público se trata. ¿Podría decirme si se trata de un proyecto de infraestructura, educación, salud o algo más?\n\n## Recomendaciones\n* Investigar la normativa y los requisitos del organismo correspondiente para determinar el tipo de plan que se necesita.\n* Revisar proyectos similares que hayan sido aprobados en el pasado para obtener referencias y aprender de sus experiencias.\n\n## Qué podría lograr y qué podría pasar\nCon la ayuda adecuada, podría lograr crear un plan sólido y aprobable por el organismo correspondiente. Sin embargo, si no se investiga adecuadamente la normativa y los requisitos, podría enfrentar retrasos o rechazos en la aprobación del plan.\n\n## Siguiente paso\n¿Podría decirme qué tipo de proyecto público se trata? ¿Es un proyecto de infraestructura, educación, salud o algo más?\n\n## Para alimentar su plan técnico (PDF)\n\n- ¿Tiene un monto aproximado en soles (aunque sea un rango, por ejemplo entre 500 mil y 2 millones)?\n- ¿En cuántos meses o años imagina el proyecto y cuándo le gustaría empezar (año aproximado)?\n\n*Con lo que nos cuente iremos armando el plan oficial; no hace falta códigos técnicos aún.*"
+        }
+      ]
+    },
+    {
+      "token_id": 4,
+      "channel": "Web",
+      "saved_at": "2026-06-03T18:43:12.313166",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Audita este plan de proyecto para aprobación en el MEF: CEDIT_Plan_1779070180536.pdf"
+        },
+        {
+          "role": "user",
+          "content": "📄 Documento adjunto: **CEDIT_Plan_1779070180536.pdf**"
+        },
+        {
+          "role": "user",
+          "content": "hola"
+        },
+        {
+          "role": "assistant",
+          "content": "❌ **No se pudo obtener respuesta**\n\nLa API respondió sin texto de chat."
+        },
+        {
+          "role": "user",
+          "content": "jo"
+        },
+        {
+          "role": "assistant",
+          "content": "## Mi opinión como CEDIT\nEntiendo que tienes una idea o proyecto en mente y buscas orientación sobre cómo proceder.\n\n## Cómo va tomando forma su idea\nHasta ahora, no tengo suficiente información para determinar qué tipo de proyecto o idea tienes. Sin embargo, puedo decir que para avanzar, necesitaremos considerar aspectos como el objetivo del proyecto, la entidad que lo ejecutaría, el presupuesto y el plazo de ejecución.\n\n## Recomendaciones\n- **Investigar programas estatales aplicables**: Podrías estar en un sector donde programas como FONIPREL, PRONIED, OxI, entre otros, podrían ser relevantes.\n- **Definir el objetivo y alcance**: Es crucial tener claro qué problema o necesidad busca resolver tu proyecto.\n\n## Qué podría lograr y qué podría pasar\nSi tu proyecto se enfoca en resolver una necesidad específica y cuenta con un plan sólido, podría lograr un impacto positivo en la comunidad o sector objetivo. Sin embargo, si no se planifica adecuadamente, podría enfrentar retrasos, observaciones o incluso ser rechazado por falta de claridad o coherencia.\n\n## Siguiente paso\n¿Podrías decirme en qué sector o área se enfoca tu proyecto (educación, salud, infraestructura, etc.)?\n\n## Para alimentar su plan técnico (PDF)\n\n- ¿En qué región, provincia y distrito estaría el centro o la obra?\n- ¿Quién lo ejecutaría en la práctica (municipalidad, gobierno regional, universidad, otro)?\n\n*Con lo que nos cuente iremos armando el plan oficial; no hace falta códigos técnicos aún.*"
+        }
+      ]
+    },
+    {
       "token_id": 3,
       "channel": "Web",
       "saved_at": "2026-06-03T00:13:30.214523",

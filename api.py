@@ -1,11 +1,12 @@
 import io
 import logging
 import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Request, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,9 @@ from cedit_core import (
     FreemiumLimitError,
     detect_input_mode,
     consumes_freemium_credit,
+    public_llm_error_message,
+    reload_groq_config,
+    groq_runtime_status,
 )
 from premium_store import (
     register_wallet,
@@ -48,6 +52,12 @@ from chain_service import (
     mint_firma_pdf,
     restore_conversation_for_wallet,
     MEF_APPROVAL_THRESHOLD,
+    conversation_content_digest,
+    build_registro_attest_message,
+    build_pdf_attest_message,
+    verify_wallet_signature,
+    assert_fresh_attest,
+    CEDIT_CONTRACT_ADDRESS,
 )
 from mef_news_automation import sync_mef_news, get_latest_snapshot, MEF_NEWS_LIST_URL
 
@@ -135,6 +145,8 @@ class BlockchainMintRequest(BaseModel):
     user_id: Optional[str] = None
     conversation_id: Optional[str] = None
     conversation_text: Optional[str] = None
+    signature: Optional[str] = None
+    issued_at: Optional[int] = None
 
 
 class BlockchainPdfMintRequest(BaseModel):
@@ -145,6 +157,8 @@ class BlockchainPdfMintRequest(BaseModel):
     mef_score: int = 0
     conversation_id: Optional[str] = None
     user_id: Optional[str] = None
+    signature: Optional[str] = None
+    issued_at: Optional[int] = None
 
 
 class BlockchainSyncBackupRequest(BaseModel):
@@ -162,9 +176,16 @@ def _uid(header: Optional[str], body_id: Optional[str]) -> str:
     return body_id or header or "web_anonymous"
 
 
+@app.on_event("startup")
+async def _on_startup():
+    reload_groq_config()
+    st = groq_runtime_status()
+    log.info("Groq activo: primary=%s fallback=%s", st["primary"], st["fallback"])
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "CEDIT"}
+    return {"status": "ok", "service": "CEDIT", "groq": groq_runtime_status()}
 
 
 def _scope(
@@ -252,14 +273,23 @@ async def blockchain_prepare_attest_web(req: BlockchainMintRequest):
     if not text.strip():
         raise HTTPException(status_code=400, detail="No hay conversación para atestiguar.")
     cfg = get_chain_config()
+    channel = req.channel or "Web"
+    user_hash = hash_user_identifier(channel, user_id=req.user_id or "", wallet=wallet)
+    digest = conversation_content_digest(text)
+    contract = cfg.get("contract_address") or CEDIT_CONTRACT_ADDRESS
+    issued_at = int(time.time())
+    sign_message = build_registro_attest_message(
+        wallet, channel, user_hash, digest, contract, issued_at
+    )
     return {
         "ok": True,
-        "contract_address": cfg.get("contract_address"),
+        "contract_address": contract,
         "chain_id": cfg.get("chain_id"),
-        "web_self_mint": cfg.get("web_self_mint", True),
-        "channel": req.channel or "Web",
-        "user_hash": hash_user_identifier(req.channel or "Web", user_id=req.user_id or "", wallet=wallet),
-        "conversation_text": text,
+        "channel": channel,
+        "user_hash": user_hash,
+        "conversation_digest": digest,
+        "issued_at": issued_at,
+        "sign_message": sign_message,
     }
 
 
@@ -285,15 +315,23 @@ async def blockchain_prepare_attest_pdf_web(req: BlockchainPdfMintRequest):
     if not channel_url:
         channel_url = build_channel_url(req.channel or "Web", conversation_id=req.conversation_id or "")
     cfg = get_chain_config()
+    channel = req.channel or pending.get("channel") or "Web"
+    pdf_hash = pending.get("pdf_hash")
+    contract = cfg.get("pdf_contract_address") or ""
+    issued_at = int(time.time())
+    sign_message = build_pdf_attest_message(
+        wallet, pdf_hash, channel, channel_url, mef, contract, issued_at
+    )
     return {
         "ok": True,
-        "contract_address": cfg.get("pdf_contract_address"),
+        "contract_address": contract,
         "chain_id": cfg.get("chain_id"),
-        "web_self_mint": cfg.get("web_self_mint", True),
-        "pdf_hash": pending.get("pdf_hash"),
+        "pdf_hash": pdf_hash,
         "channel_url": channel_url,
-        "channel": req.channel or pending.get("channel") or "Web",
+        "channel": channel,
         "mef_score": mef,
+        "issued_at": issued_at,
+        "sign_message": sign_message,
     }
 
 
@@ -344,6 +382,26 @@ async def blockchain_mint(req: BlockchainMintRequest):
         pass
     hist = [{"role": m.role, "content": m.content} for m in req.history]
     text = req.conversation_text or build_conversation_text(hist)
+    channel = req.channel or "Web"
+    if channel.lower() == "web":
+        if not req.signature or req.issued_at is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe firmar la autorización en su extensión (MetaMask/Pali).",
+            )
+        try:
+            assert_fresh_attest(int(req.issued_at))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        user_hash = hash_user_identifier(channel, user_id=req.user_id or "", wallet=wallet)
+        digest = conversation_content_digest(text)
+        cfg = get_chain_config()
+        contract = cfg.get("contract_address") or ""
+        expected = build_registro_attest_message(
+            wallet, channel, user_hash, digest, contract, int(req.issued_at)
+        )
+        if not verify_wallet_signature(wallet, expected, req.signature):
+            raise HTTPException(status_code=403, detail="Firma inválida o wallet no coincide.")
     try:
         result = mint_registro(
             wallet,
@@ -388,9 +446,43 @@ async def blockchain_attest_pdf(req: BlockchainPdfMintRequest):
         )
     if not is_pro_wallet(wallet):
         raise HTTPException(status_code=403, detail="Plan Pro requerido para firmar el PDF en blockchain.")
+    pending_peek = peek_pending_pdf_attestation(wallet, conversation_id=req.conversation_id or "")
+    if not pending_peek:
+        raise HTTPException(
+            status_code=400,
+            detail="Hash PDF no coincide con el último plan generado en esta sesión. Genere el PDF de nuevo.",
+        )
+    channel = req.channel or pending_peek.get("channel") or "Web"
+    channel_url = (req.channel_url or pending_peek.get("channel_url") or "").strip()
+    if not channel_url:
+        channel_url = build_channel_url(channel, conversation_id=req.conversation_id or "")
+    mef = int(pending_peek.get("mef_score") or req.mef_score or 0)
+    if channel.lower() == "web":
+        if not req.signature or req.issued_at is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Debe firmar la autorización en su extensión (MetaMask/Pali).",
+            )
+        try:
+            assert_fresh_attest(int(req.issued_at))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cfg = get_chain_config()
+        contract = cfg.get("pdf_contract_address") or ""
+        expected = build_pdf_attest_message(
+            wallet,
+            pending_peek["pdf_hash"],
+            channel,
+            channel_url,
+            mef,
+            contract,
+            int(req.issued_at),
+        )
+        if not verify_wallet_signature(wallet, expected, req.signature):
+            raise HTTPException(status_code=403, detail="Firma inválida o wallet no coincide.")
     pending = consume_pending_pdf_attestation(
         wallet,
-        req.pdf_hash,
+        req.pdf_hash or pending_peek["pdf_hash"],
         conversation_id=req.conversation_id or "",
     )
     if not pending:
@@ -398,12 +490,7 @@ async def blockchain_attest_pdf(req: BlockchainPdfMintRequest):
             status_code=400,
             detail="Hash PDF no coincide con el último plan generado en esta sesión. Genere el PDF de nuevo.",
         )
-    channel_url = (req.channel_url or pending.get("channel_url") or "").strip()
-    if not channel_url:
-        channel_url = build_channel_url(
-            req.channel or pending.get("channel") or "Web",
-            conversation_id=req.conversation_id or "",
-        )
+    channel_url = (req.channel_url or pending.get("channel_url") or channel_url).strip()
     try:
         activate_wallet(wallet, user_id=req.user_id or "")
     except ValueError:
@@ -479,7 +566,7 @@ async def mef_news_sync_endpoint(
             max_verify=min(max(request.max_verify, 1), 40),
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
 
 
 @app.get("/api/automation/mef-news/latest")
@@ -531,7 +618,7 @@ async def chat_endpoint(
     except FreemiumLimitError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
 
 
 @app.post("/api/upload")
@@ -570,7 +657,7 @@ async def upload_pdf(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
 
 
 @app.post("/api/generate-pdf")
@@ -630,7 +717,7 @@ async def generate_pdf_endpoint(
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error al generar PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
 
 
 @app.post("/api/refine-plan")
@@ -656,7 +743,7 @@ async def refine_plan_endpoint(
     except FreemiumLimitError as e:
         raise HTTPException(status_code=402, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
 
 
 @app.get("/api/whatsapp/webhook")
@@ -689,7 +776,15 @@ async def whatsapp_webhook_receive(request: Request):
         return {"status": "error", "reason": "invalid_json"}
     msgs = extract_messages(payload)
     if msgs:
+        from whatsapp_client import mark_read
+
+        for msg in msgs:
+            mid = msg.get("message_id")
+            if mid:
+                mark_read(mid)
         log.info("WhatsApp webhook: %d mensaje(s) de %s", len(msgs), msgs[0].get("wa_id", "?"))
+    else:
+        log.debug("WhatsApp webhook sin mensajes entrantes (p. ej. solo status)")
     threading.Thread(target=handle_webhook_payload, args=(payload,), daemon=False).start()
     return {"status": "ok"}
 

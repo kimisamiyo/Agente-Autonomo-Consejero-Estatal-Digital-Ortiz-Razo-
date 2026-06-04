@@ -1,13 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useI18n } from '../i18n/I18nContext';
 import { fetchBlockchainConfig } from '../blockchain/mintRegistro';
-import {
-  prepareRegistroMint,
-  mintRegistroViaWallet,
-  syncMintBackup,
-  connectWalletForMint,
-} from '../blockchain/walletMint';
-import WalletProviderModal from './WalletProviderModal';
+import { attestRegistroWithExtension } from '../blockchain/walletMint';
 
 const MintRegistroPanel = ({
   messages = [],
@@ -24,8 +18,6 @@ const MintRegistroPanel = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [prepareData, setPrepareData] = useState(null);
 
   useEffect(() => {
     fetchBlockchainConfig()
@@ -40,74 +32,36 @@ const MintRegistroPanel = ({
       content: m.fullContent || m.content || '',
     }));
 
-  const runMint = async (injectedProvider) => {
-    setPickerOpen(false);
-    setLoading(true);
-    setError('');
-    setResult(null);
-    try {
-      const prep =
-        prepareData ||
-        (await prepareRegistroMint(
-          {
-            wallet: walletAddress.trim(),
-            channel: 'Web',
-            history,
-            user_id: userId,
-            conversation_id: conversationId,
-          },
-          apiHeaders()
-        ));
-      const { signer, address } = await connectWalletForMint(injectedProvider);
-      const data = await mintRegistroViaWallet({
-        signer,
-        contractAddress: prep.contract_address,
-        channel: prep.channel,
-        userHash: prep.user_hash,
-        conversationText: prep.conversation_text,
-      });
-      await syncMintBackup(
-        {
-          wallet: address,
-          token_id: data.token_id,
-          channel: 'Web',
-          kind: 'registro',
-          history,
-          conversation_id: conversationId,
-        },
-        apiHeaders()
-      );
-      setResult(data);
-      onMintSuccess?.(data);
-    } catch (e) {
-      setError(e.response?.data?.detail || e.reason || e.message || t('mint.error'));
-    } finally {
-      setLoading(false);
-      setPrepareData(null);
-    }
-  };
-
   const handleMint = async () => {
     const wallet = (walletAddress || '').trim();
     if (!wallet) {
       setError(t('mint.walletRequired'));
       return;
     }
+    setLoading(true);
+    setError('');
+    setResult(null);
     try {
-      const prep = await prepareRegistroMint(
+      const data = await attestRegistroWithExtension(
         {
           wallet,
           channel: 'Web',
           history,
-          user_id: userId,
-          conversation_id: conversationId,
+          userId,
+          conversationId,
         },
         apiHeaders()
       );
-      setPrepareData(prep);
-      setPickerOpen(true);
+      setResult(data);
+      onMintSuccess?.(data);
     } catch (e) {
-      setError(e.response?.data?.detail || e.message || t('mint.error'));
+      if (e.code === 4001 || e.code === 'ACTION_REJECTED') {
+        setError(t('mint.rejected'));
+      } else {
+        setError(e.response?.data?.detail || e.message || t('mint.error'));
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -129,47 +83,36 @@ const MintRegistroPanel = ({
     : 'p-4 rounded-xl border border-red-200 bg-gradient-to-br from-slate-900 to-slate-800 text-slate-100';
 
   return (
-    <>
-      <WalletProviderModal
-        open={pickerOpen}
-        title={t('mint.pickerTitle')}
-        onSelect={runMint}
-        onClose={() => {
-          setPickerOpen(false);
-          setPrepareData(null);
-        }}
-      />
-      <div className={boxClass}>
-        <div className={compact ? 'flex items-center gap-2 min-w-0 flex-1' : 'mb-3'}>
-          <span className="material-symbols-outlined text-red-700 text-lg shrink-0">link</span>
-          <div className="min-w-0">
-            <p className={`font-bold ${compact ? 'text-[11px] text-red-900' : 'text-sm text-red-400'}`}>
-              {t('mint.title')}
-            </p>
-            {!compact && <p className="text-xs text-slate-400 mt-0.5">{t('mint.subtitle')}</p>}
-          </div>
-        </div>
-        {result ? (
-          <p className="text-emerald-400 font-semibold text-xs">
-            {t('mint.success', { id: result.token_id ?? '—' })}
+    <div className={boxClass}>
+      <div className={compact ? 'flex items-center gap-2 min-w-0 flex-1' : 'mb-3'}>
+        <span className="material-symbols-outlined text-red-700 text-lg shrink-0">link</span>
+        <div className="min-w-0">
+          <p className={`font-bold ${compact ? 'text-[11px] text-red-900' : 'text-sm text-red-400'}`}>
+            {t('mint.title')}
           </p>
-        ) : (
-          <button
-            type="button"
-            disabled={loading || !walletAddress}
-            onClick={handleMint}
-            className={
-              compact
-                ? 'text-[10px] px-2.5 py-1 rounded-lg bg-red-800 text-white font-bold'
-                : 'text-xs px-3 py-1.5 rounded-lg bg-red-700 text-white font-bold'
-            }
-          >
-            {loading ? t('mint.loading') : t('mint.cta')}
-          </button>
-        )}
-        {error && <p className="text-[10px] text-red-300 mt-1">{error}</p>}
+          {!compact && <p className="text-xs text-slate-400 mt-0.5">{t('mint.subtitle')}</p>}
+        </div>
       </div>
-    </>
+      {result ? (
+        <p className="text-emerald-400 font-semibold text-xs">
+          {t('mint.success', { id: result.token_id ?? '—' })}
+        </p>
+      ) : (
+        <button
+          type="button"
+          disabled={loading || !walletAddress}
+          onClick={handleMint}
+          className={
+            compact
+              ? 'text-[10px] px-2.5 py-1 rounded-lg bg-red-800 text-white font-bold'
+              : 'text-xs px-3 py-1.5 rounded-lg bg-red-700 text-white font-bold'
+          }
+        >
+          {loading ? t('mint.loading') : t('mint.cta')}
+        </button>
+      )}
+      {error && <p className="text-[10px] text-red-300 mt-1">{error}</p>}
+    </div>
   );
 };
 

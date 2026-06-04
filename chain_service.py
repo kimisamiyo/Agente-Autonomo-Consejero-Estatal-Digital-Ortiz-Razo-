@@ -7,6 +7,7 @@ import hashlib
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 log = logging.getLogger("cedit.chain")
@@ -174,7 +175,7 @@ def get_chain_config() -> Dict[str, Any]:
         "pdf_contract_name": "CeditFirmasPdf",
         "pdf_contract_explorer_url": f"{explorer}/address/{pdf_addr}" if pdf_addr else None,
         "mef_threshold": MEF_APPROVAL_THRESHOLD,
-        "web_self_mint": os.getenv("CEDIT_WEB_SELF_MINT", "1").strip() in ("1", "true", "yes"),
+        "web_self_mint": os.getenv("CEDIT_WEB_SELF_MINT", "0").strip() in ("1", "true", "yes"),
         "owner_wallet": owner_wallet,
         "owner_explorer_url": f"{explorer}/address/{owner_wallet}" if owner_wallet else None,
     }
@@ -184,6 +185,82 @@ def hash_user_identifier(channel: str, user_id: str = "", wallet: str = "") -> s
     key = (wallet or user_id or "anon").strip().lower()
     raw = f"cedit:{channel}:{key}".encode("utf-8")
     return "0x" + hashlib.sha256(raw).hexdigest()
+
+
+def conversation_content_digest(text: str) -> str:
+    from web3 import Web3
+
+    digest = Web3.keccak((text or "").encode("utf-8"))
+    hex_val = digest.hex() if hasattr(digest, "hex") else str(digest)
+    return hex_val if hex_val.startswith("0x") else f"0x{hex_val}"
+
+
+def build_registro_attest_message(
+    wallet: str,
+    channel: str,
+    user_hash: str,
+    conversation_digest: str,
+    contract_address: str,
+    issued_at: int,
+) -> str:
+    return (
+        "CEDIT — Autorización de mint NFT (CeditRegistros)\n"
+        f"Contrato: {contract_address}\n"
+        f"Red: zkTanenbaum (chainId {SYSCOIN_CHAIN_ID})\n"
+        f"Acción: mint_registro\n"
+        f"Wallet: {wallet.strip().lower()}\n"
+        f"Canal: {channel}\n"
+        f"User hash: {user_hash}\n"
+        f"Digest conversación (Keccak-256): {conversation_digest}\n"
+        f"Emitido (unix): {issued_at}\n"
+        "Al firmar autoriza a CEDIT a acuñar el NFT en su wallet."
+    )
+
+
+def build_pdf_attest_message(
+    wallet: str,
+    pdf_hash: str,
+    channel: str,
+    channel_url: str,
+    mef_score: int,
+    contract_address: str,
+    issued_at: int,
+) -> str:
+    return (
+        "CEDIT — Autorización de mint NFT (CeditFirmasPdf)\n"
+        f"Contrato: {contract_address}\n"
+        f"Red: zkTanenbaum (chainId {SYSCOIN_CHAIN_ID})\n"
+        f"Acción: mint_firma_pdf\n"
+        f"Wallet: {wallet.strip().lower()}\n"
+        f"Canal: {channel}\n"
+        f"URL canal: {channel_url}\n"
+        f"Hash PDF (Keccak-256): {pdf_hash.strip().lower()}\n"
+        f"Índice MEF: {int(mef_score)}%\n"
+        f"Emitido (unix): {issued_at}\n"
+        "Al firmar autoriza a CEDIT a acuñar la firma PDF en su wallet."
+    )
+
+
+def verify_wallet_signature(wallet: str, message: str, signature: str) -> bool:
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+
+    if not signature or not message:
+        return False
+    try:
+        recovered = Account.recover_message(encode_defunct(text=message), signature=signature)
+        return recovered.lower() == wallet.strip().lower()
+    except Exception as ex:
+        log.warning("verify_wallet_signature: %s", ex)
+        return False
+
+
+def assert_fresh_attest(issued_at: int, *, max_age_sec: int = 600) -> None:
+    if issued_at is None:
+        raise ValueError("Falta issued_at en la autorización.")
+    now = int(time.time())
+    if abs(now - int(issued_at)) > max_age_sec:
+        raise ValueError("La autorización firmada expiró. Vuelva a intentar el mint.")
 
 
 def _sanitize_line(text: str) -> str:
@@ -317,7 +394,7 @@ def mint_registro(
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
 
     if receipt.get("status") != 1:
-        raise RuntimeError("Transacción de mint revertida on-chain")
+        raise RuntimeError("La red zkTanenbaum se encuentra saturada. Intente nuevamente mas tarde.")
 
     token_id = None
     try:
@@ -387,7 +464,7 @@ def mint_firma_pdf(
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
 
     if receipt.get("status") != 1:
-        raise RuntimeError("Transacción de firma PDF revertida on-chain")
+        raise RuntimeError("La red zkTanenbaum se encuentra saturada. Intente nuevamente mas tarde.")
 
     token_id = None
     try:

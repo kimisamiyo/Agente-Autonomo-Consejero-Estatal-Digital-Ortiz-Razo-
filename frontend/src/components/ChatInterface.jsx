@@ -6,15 +6,15 @@ import MefScoreCard from './MefScoreCard';
 import MentorInsightPanel from './MentorInsightPanel';
 import GuideGraphTrail from './GuideGraphTrail';
 import AuditDecisionNetwork from './AuditDecisionNetwork';
-import { canShowPdfOffer, isEarlyGuidePhase, shouldShowSyscoinBadge } from '../utils/pdfEligibility';
+import { canShowPdfOffer, isEarlyGuidePhase } from '../utils/pdfEligibility';
 import { getMentorLoadingLabel } from '../utils/mentorActivity';
 import { isAuditSession } from '../utils/auditDecisionPoints';
 import PdfLanguageModal from './PdfLanguageModal';
 import NetworksLinks from './NetworksLinks';
-import MintRegistroPanel from './MintRegistroPanel';
-import FirmaPdfPanel from './FirmaPdfPanel';
 import SaveConversationButton from './SaveConversationButton';
 import { saveExpediente } from '../utils/expedientesStore';
+import { attestPdfWithExtension } from '../blockchain/walletMint';
+import { fetchBlockchainConfig } from '../blockchain/mintRegistro';
 import { useI18n } from '../i18n/I18nContext';
 import {
   ceditCardClass,
@@ -60,10 +60,8 @@ const ChatInterface = ({
   toggleSidebar,
   usage = { count: 0, limit: 10 },
   sessionMode = 'chat',
-  blockchainHash,
   conversationId = '',
   walletAddress = '',
-  onMintSuccess,
   onConversationSaved,
   userId,
   freemiumExceeded,
@@ -72,6 +70,7 @@ const ChatInterface = ({
   onOpenPremium,
   onRequestResetMemory,
   apiHeaders,
+  onPdfExpedienteSaved,
   uiLocale = 'es',
   decisionCheckpoints = [],
   nodePositions = {},
@@ -105,8 +104,8 @@ const ChatInterface = ({
   const [selectedFile, setSelectedFile] = useState(null);
   const [refineTarget, setRefineTarget] = useState(null);
   const [generatingPdf, setGeneratingPdf] = useState(null);
+  const [pdfGenPhase, setPdfGenPhase] = useState(null);
   const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
-  const [pdfAttestation, setPdfAttestation] = useState(null);
   /** 'network' | 'mentor' | null — solo un panel del header abierto a la vez */
   const [headerPanelOpen, setHeaderPanelOpen] = useState(null);
   const messagesEndRef = useRef(null);
@@ -246,9 +245,19 @@ const ChatInterface = ({
     } else if (file) alert(t('chat.pdfOnly'));
   };
 
+  const triggerPdfDownload = (blob) => {
+    const url = window.URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `CEDIT_Plan_${Date.now()}.pdf`;
+    link.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   const runGeneratePDF = async (msg, index, pdfOutputLanguage = 'es') => {
     if (!canShowPdfOffer(msg).show) return;
     setGeneratingPdf(index);
+    setPdfGenPhase('build');
     try {
       const content = msg.fullContent || msg.content;
       const history = messages.map((m) => ({
@@ -283,7 +292,64 @@ const ChatInterface = ({
       const pdfKeccak = response.headers['x-pdf-hash-keccak'] || '';
       const mefScore = parseInt(response.headers['x-mef-score'] || '0', 10);
       const meets = response.headers['x-mef-meets-threshold'] === '1';
-      const firmaAvailable = response.headers['x-pdf-firma-available'] === '1';
+      const requiresPdfFirma = meets && mefScore >= 80 && Boolean(pdfKeccak);
+
+      if (requiresPdfFirma) {
+        if (!isPremium || !walletAddress?.trim()) {
+          alert(t('chat.genPdfNeedPro'));
+          onOpenPremium?.();
+          return;
+        }
+        const cfg = await fetchBlockchainConfig();
+        if (!cfg.pdf_enabled) {
+          alert(t('pdfFirma.notConfigured'));
+          return;
+        }
+
+        setPdfGenPhase('sign');
+        let firmaData;
+        try {
+          firmaData = await attestPdfWithExtension(
+            {
+              wallet: walletAddress.trim(),
+              pdfHash: pdfKeccak,
+              mefScore,
+              channel: 'Web',
+              conversationId,
+              userId,
+            },
+            headersConfig
+          );
+        } catch (firmaErr) {
+          if (firmaErr.code === 4001 || firmaErr.code === 'ACTION_REJECTED') {
+            alert(t('chat.genPdfFirmaRejected'));
+          } else {
+            alert(firmaErr.response?.data?.detail || firmaErr.message || t('pdfFirma.error'));
+          }
+          return;
+        }
+
+        triggerPdfDownload(response.data);
+
+        const saved = saveExpediente({
+          title: msg.filename ? `Plan MEF — ${msg.filename}` : 'Plan Técnico Oficial CEDIT',
+          projectName: msg.filename?.replace(/\.pdf$/i, '') || '',
+          score: mefScore,
+          docScore: msg.mefScore?.document_only_index,
+          hash,
+          pdfKeccak,
+          conversationId,
+          firmaPending: false,
+          pdfFirmaTokenId: firmaData.token_id ?? null,
+          pdfFirmaTx: firmaData.tx_hash || '',
+          pdfFirmaExplorerTx: firmaData.explorer_tx || '',
+          pdfFirmaContract: firmaData.contract_address || '',
+          pdfLanguage: pdfOutputLanguage,
+        });
+        onPdfExpedienteSaved?.(saved);
+        return;
+      }
+
       if (meets && mefScore >= 80) {
         saveExpediente({
           title: msg.filename ? `Plan MEF — ${msg.filename}` : 'Plan Técnico Oficial CEDIT',
@@ -291,20 +357,13 @@ const ChatInterface = ({
           score: mefScore,
           docScore: msg.mefScore?.document_only_index,
           hash,
+          pdfKeccak: pdfKeccak || '',
+          conversationId,
+          firmaPending: false,
           pdfLanguage: pdfOutputLanguage,
         });
       }
-      if (firmaAvailable && pdfKeccak && isPremium) {
-        setPdfAttestation({ pdfHash: pdfKeccak, mefScore, legacyHash: hash });
-      } else {
-        setPdfAttestation(null);
-      }
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `CEDIT_Plan_${Date.now()}.pdf`;
-      link.click();
-      window.URL.revokeObjectURL(url);
+      triggerPdfDownload(response.data);
     } catch (err) {
       if (!err.response) {
         // Error de red, conexión o excepción local de JavaScript en el navegador
@@ -328,6 +387,7 @@ const ChatInterface = ({
       }
     } finally {
       setGeneratingPdf(null);
+      setPdfGenPhase(null);
     }
   };
 
@@ -691,7 +751,11 @@ const ChatInterface = ({
                                 className={`${ceditBtnPrimaryClass('blue')} !py-1.5 !px-3 !text-[11px] !rounded-lg`}
                               >
                                 <span className="material-symbols-outlined text-sm">download</span>
-                                {generatingPdf === index ? t('chat.genPdfLoading') : t('chat.genPdf')}
+                                {generatingPdf === index
+                                  ? pdfGenPhase === 'sign'
+                                    ? t('chat.genPdfSign')
+                                    : t('chat.genPdfLoading')
+                                  : t('chat.genPdf')}
                               </button>
                               <button
                                 type="button"
@@ -709,26 +773,6 @@ const ChatInterface = ({
                           )}
                         </div>
                       )}
-
-                    {isPremium && shouldShowSyscoinBadge(msg) && (
-                      <div className="mt-2 px-2">
-                        <MintRegistroPanel
-                          compact
-                          isProConfirmed={isPremium}
-                          messages={messages}
-                          userId={userId}
-                          conversationId={conversationId}
-                          apiHeaders={apiHeaders}
-                          walletAddress={walletAddress}
-                          onMintSuccess={onMintSuccess}
-                        />
-                        {blockchainHash && (
-                          <p className="text-[10px] text-slate-500 mt-1 font-mono truncate">
-                            {t('mint.hashLabel')}: {blockchainHash}
-                          </p>
-                        )}
-                      </div>
-                    )}
 
                     <div className="flex justify-between flex-wrap gap-2 px-2 mt-1">
                       {checkpointByMessageIndex[index] && onRestoreCheckpoint && (
@@ -798,18 +842,6 @@ const ChatInterface = ({
               <button type="button" onClick={() => setSelectedFile(null)} className="text-slate-400 hover:text-slate-800">
                 <span className="material-symbols-outlined text-sm">close</span>
               </button>
-            </div>
-          )}
-          {pdfAttestation && isPremium && (
-            <div className="mb-2">
-              <FirmaPdfPanel
-                pdfAttestation={pdfAttestation}
-                conversationId={conversationId}
-                userId={userId}
-                apiHeaders={apiHeaders}
-                walletAddress={walletAddress}
-                isProConfirmed={isPremium}
-              />
             </div>
           )}
           <div className="bg-white border border-border-gray rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-slate-400 overflow-hidden transition-shadow">
