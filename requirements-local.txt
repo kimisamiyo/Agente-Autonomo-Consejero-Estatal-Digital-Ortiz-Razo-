@@ -1,0 +1,3 @@
+# Copia local del freeze pip (NO usar en Cloudflare Pages).
+# Fly usa: CEDIT/requirements-deploy.txt
+# Renombrado desde requirements.txt para que Pages no ejecute pip en la raiz.
