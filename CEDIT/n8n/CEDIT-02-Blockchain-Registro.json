@@ -1,0 +1,84 @@
+{
+  "name": "CEDIT 02 — Blockchain y trazabilidad",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ⛓️ CEDIT — FLUJO 2 (IMPORTAR SEGUNDO)\n\n**Entrada:** `POST /cedit/blockchain`\n\n**Llamado desde:** Flujo 01 cuando hay auditoría o registro explícito\n\n**Salida:** hash simulado Syscoin + timestamp para mostrar en la UI web/Discord",
+        "height": 240,
+        "width": 380,
+        "color": 6
+      },
+      "id": "sticky-bchain",
+      "name": "📌 FLUJO 2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-80, 120]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cedit/blockchain",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-blockchain",
+      "name": "🔗 Webhook Blockchain",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 280],
+      "webhookId": "cedit-blockchain-register"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst body = $input.first().json.body || $input.first().json;\nconst payload = JSON.stringify(body);\nconst hash = '0x' + crypto.createHash('sha256').update(payload).digest('hex').slice(0, 40);\nconst now = new Date().toISOString();\nreturn [{\n  json: {\n    registered: true,\n    network: 'zkSYS Syscoin Testnet',\n    hash,\n    timestamp: now,\n    message: body.message || '',\n    user_id: body.user_id || 'anonymous',\n    canal: body.canal || 'web'\n  }\n}];"
+      },
+      "id": "code-hash",
+      "name": "🔐 Generar hash SHA-256",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-bchain",
+      "name": "✅ Responder registro",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 280]
+    },
+    {
+      "parameters": {
+        "content": "## Conexión con Flujo 01\n\n**Activar este flujo ANTES que el 01.**\n\nURL producción: `http://localhost:5678/webhook/cedit/blockchain`",
+        "height": 160,
+        "width": 300,
+        "color": 3
+      },
+      "id": "sticky-connect",
+      "name": "📌 Conectar con 01",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [620, 460]
+    }
+  ],
+  "connections": {
+    "🔗 Webhook Blockchain": {
+      "main": [[{ "node": "🔐 Generar hash SHA-256", "type": "main", "index": 0 }]]
+    },
+    "🔐 Generar hash SHA-256": {
+      "main": [[{ "node": "✅ Responder registro", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {},
+  "tags": [{ "name": "CEDIT" }]
+}

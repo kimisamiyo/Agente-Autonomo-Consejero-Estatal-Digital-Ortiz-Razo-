@@ -1,0 +1,130 @@
+/* Custom Scrollbar for better block aesthetic */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* Ensure React Markdown renders lists correctly since Tailwind resets them */
+.prose ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.prose ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.prose strong {
+  font-weight: 600;
+  color: #1a1c1c;
+}
+
+/* CEDIT — animaciones sutiles */
+@keyframes cedit-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cedit-message-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cedit-mode-enter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cedit-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes cedit-pulse-btn {
+  0% { box-shadow: 0 0 0 0 rgba(29, 78, 216, 0.35); }
+  70% { box-shadow: 0 0 0 10px rgba(29, 78, 216, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(29, 78, 216, 0); }
+}
+@keyframes cedit-dropdown-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes cedit-network-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(129, 140, 248, 0.25); border-color: rgba(129, 140, 248, 0.35); }
+  50% { box-shadow: 0 0 12px 2px rgba(129, 140, 248, 0.45); border-color: rgba(167, 139, 250, 0.65); }
+}
+
+.cedit-fade-in { animation: cedit-fade-in 0.45s ease-out both; }
+.cedit-message-enter { animation: cedit-message-enter 0.4s ease-out both; }
+.cedit-mode-enter { animation: cedit-mode-enter 0.35s ease-out both; }
+.cedit-float { animation: cedit-float 3s ease-in-out infinite; }
+.cedit-card-hover:hover { transform: translateY(-2px); }
+.cedit-audit-glow { box-shadow: 0 0 0 1px rgba(29, 78, 216, 0.12), 0 8px 24px rgba(15, 23, 42, 0.06); }
+.cedit-pulse-btn { animation: cedit-pulse-btn 1.8s infinite; }
+.cedit-pdf-cta { animation: cedit-fade-in 0.5s ease-out 0.15s both; }
+.cedit-network-pulse { animation: cedit-network-pulse 2.2s ease-in-out infinite; }
+@keyframes cedit-network-pulse-light {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(148, 163, 184, 0.2); border-color: rgba(203, 213, 225, 0.9); }
+  50% { box-shadow: 0 0 8px 1px rgba(148, 163, 184, 0.35); border-color: rgba(148, 163, 184, 0.75); }
+}
+.cedit-network-pulse-light { animation: cedit-network-pulse-light 2.2s ease-in-out infinite; }
+.cedit-dropdown-enter { animation: cedit-dropdown-enter 0.2s ease-out both; }
+
+details summary::-webkit-details-marker {
+  display: none;
+}
+
+:root {
+  --cedit-line-height: 1.5;
+}
+
+body {
+  line-height: var(--cedit-line-height);
+}
+
+.cedit-high-contrast {
+  filter: contrast(1.15);
+}
+.cedit-high-contrast .bg-white,
+.cedit-high-contrast .bg-background {
+  background: #fff !important;
+  color: #000 !important;
+}
+.cedit-contrast-mid {
+  filter: contrast(1.08);
+}
+.cedit-large-cursor,
+.cedit-large-cursor * {
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath fill='%23000' d='M4 4 L4 24 L12 18 L16 28 L20 26 L16 16 L24 16 Z'/%3E%3C/svg%3E") 4 4, auto !important;
+}
+.cedit-dyslexia .prose,
+.cedit-dyslexia textarea,
+.cedit-dyslexia button {
+  font-family: 'Comic Sans MS', 'OpenDyslexic', Verdana, sans-serif !important;
+  letter-spacing: 0.04em;
+  word-spacing: 0.12em;
+}
+.cedit-reading-mask::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.55) 42%,
+    transparent 42%,
+    transparent 58%,
+    rgba(0, 0, 0, 0.55) 58%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}
