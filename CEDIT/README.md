@@ -1,5 +1,7 @@
 # CEDIT — Consejero Estatal Digital
 
+Licencia: [MIT](../LICENSE) — Copyright (c) 2026 Mayrol Andre Ortiz Daza / Luis Razo.
+
 ## Inicio rápido (2 clics tras `git pull`)
 
 | Paso | Script | Qué hace |

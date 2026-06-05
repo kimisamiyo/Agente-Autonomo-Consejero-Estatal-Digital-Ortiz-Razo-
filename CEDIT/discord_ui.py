@@ -121,6 +121,11 @@ def welcome_embed(requested_by: Optional[discord.abc.User] = None) -> discord.Em
         "• `/mint_registro` — atestiguar en blockchain (≥80% MEF, también vía botón si es Pro)\n\n"
         "📥 **PDF oficial** desde **≥80%** de viabilidad · **Mis métricas** bajo demanda.\n"
         f"🌐 **Redes** — Discord, comunidad y [@{TELEGRAM_BOT_USERNAME}]({TELEGRAM_BOT_URL}) en Telegram."
+        + (
+            f" · [Web CEDIT]({WEB_APP_URL})"
+            if WEB_APP_URL
+            else ""
+        )
     )
     return peru_embed(description, requested_by=requested_by, thumbnail=True)
 
@@ -512,15 +517,21 @@ def thinking_embed(text: str = "Analizando su consulta…") -> discord.Embed:
 # --- Botones (estilo institucional: rojo / dorado) ---
 
 def redes_embed(requested_by: Optional[discord.abc.User] = None) -> discord.Embed:
-    web_line = (
-        f"🌍 **Web CEDIT:** {WEB_APP_URL}"
-        if WEB_APP_URL
-        else f"🌍 **Web CEDIT:** {WEB_APP_COMING_SOON}"
-    )
+    if WEB_APP_URL:
+        web_line = f"🌍 **Web CEDIT:** [Abrir mentor en el navegador]({WEB_APP_URL})"
+        intro = (
+            "Use los botones para **añadir el bot**, **unirse a la comunidad**, "
+            "**abrir Telegram** o **visitar la web**.\n\n"
+        )
+    else:
+        web_line = f"🌍 **Web CEDIT:** {WEB_APP_COMING_SOON}"
+        intro = (
+            "Use los botones para **incorporar el bot a su servidor Discord**, "
+            "**unirse a la comunidad** o **abrir el mentor en Telegram**.\n\n"
+        )
     description = (
         "**CEDIT en sus canales favoritos**\n\n"
-        "Use los botones para **incorporar el bot a su servidor Discord**, "
-        "**unirse a la comunidad** o **abrir el mentor en Telegram**.\n\n"
+        f"{intro}"
         f"✈️ **Telegram:** [@{TELEGRAM_BOT_USERNAME}]({TELEGRAM_BOT_URL})\n"
         f"{web_line}"
     )
@@ -554,6 +565,15 @@ class RedesView(discord.ui.View):
                 emoji="✈️",
             )
         )
+        if WEB_APP_URL:
+            self.add_item(
+                discord.ui.Button(
+                    label="Web CEDIT",
+                    style=discord.ButtonStyle.link,
+                    url=WEB_APP_URL,
+                    emoji="🌍",
+                )
+            )
 
 
 class MainMenuView(discord.ui.View):

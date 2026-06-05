@@ -8,6 +8,8 @@ import re
 import hashlib
 import datetime
 import time
+import threading
+from collections import deque
 from typing import List, Dict, Optional, Tuple, Any
 
 from pathlib import Path
@@ -571,19 +573,36 @@ def _log(msg: str) -> None:
 
 
 _vectorstore: Optional[PineconeVectorStore] = None
+_vectorstore_lock = __import__("threading").Lock()
 
 
 def get_vectorstore() -> PineconeVectorStore:
     """Carga embeddings + Pinecone solo al primer uso (uvicorn escucha antes en Fly)."""
     global _vectorstore
-    if _vectorstore is None:
-        _log("[CEDIT] Cargando embeddings y Pinecone...")
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
-        _vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=embeddings)
+    if _vectorstore is not None:
+        return _vectorstore
+    with _vectorstore_lock:
+        if _vectorstore is None:
+            _log("[CEDIT] Cargando embeddings y Pinecone...")
+            model = os.getenv(
+                "CEDIT_EMBEDDING_MODEL",
+                "sentence-transformers/all-mpnet-base-v2",
+            )
+            embeddings = HuggingFaceEmbeddings(model_name=model)
+            _vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=embeddings)
     return _vectorstore
 
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+# Respaldo con cuota distinta (Scout ~1K req/día; 8B ~14K req/día en free tier Groq).
 GROQ_MODEL_FALLBACK = "llama-3.1-8b-instant"
+GROQ_MODEL_EXTRA_FALLBACKS = [
+    m.strip()
+    for m in os.getenv(
+        "GROQ_MODEL_EXTRA_FALLBACKS",
+        "llama-3.1-8b-instant,llama-3.3-70b-versatile",
+    ).split(",")
+    if m.strip()
+]
 # compound y llama-4-scout comparten el mismo TPD (500k/día) en Groq
 GROQ_SCOUT_TPD_MODELS = {
     m.strip()
@@ -596,10 +615,36 @@ GROQ_SCOUT_TPD_MODELS = {
 GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
 GROQ_DEBUG = os.getenv("GROQ_DEBUG", "").strip().lower() in ("1", "true", "yes")
 GROQ_MAX_SYSTEM_CHARS = int(os.getenv("GROQ_MAX_SYSTEM_CHARS", "6000"))
-GROQ_MAX_RAG_CHARS = int(os.getenv("GROQ_MAX_RAG_CHARS", "2000"))
+GROQ_MAX_RAG_CHARS = int(os.getenv("GROQ_MAX_RAG_CHARS", "1500"))
+GROQ_MAX_RPM = int(os.getenv("CEDIT_GROQ_MAX_RPM", "25"))
+GROQ_INVOKE_RETRIES = int(os.getenv("CEDIT_GROQ_RETRIES", "4"))
+GROQ_RAG_K = int(os.getenv("CEDIT_RAG_K", "2"))
 
 _llm_instances: Dict[str, ChatGroq] = {}
 _groq_model_cooldown_until: Dict[str, float] = {}
+_groq_rpm_lock = threading.Lock()
+_groq_recent_calls: deque = deque()
+
+
+def _groq_throttle_wait() -> None:
+    """Evita ráfagas que disparan 429 TPM (6K/min en free tier)."""
+    with _groq_rpm_lock:
+        now = time.time()
+        while _groq_recent_calls and _groq_recent_calls[0] < now - 60.0:
+            _groq_recent_calls.popleft()
+        if len(_groq_recent_calls) >= GROQ_MAX_RPM:
+            wait = 60.0 - (now - _groq_recent_calls[0]) + 0.15
+            if wait > 0:
+                time.sleep(wait)
+        _groq_recent_calls.append(time.time())
+
+
+def _groq_cooldown_seconds(exc: Exception) -> float:
+    parsed = _parse_groq_retry_seconds(exc)
+    text = str(exc).lower()
+    if any(k in text for k in ("per day", "tokens per day", "requests per day", "tpd", "rpd")):
+        return min(parsed or 600.0, 3600.0)
+    return min(parsed or 10.0, 90.0)
 
 
 def _parse_groq_retry_seconds(exc: Exception) -> Optional[float]:
@@ -616,7 +661,7 @@ def _parse_groq_retry_seconds(exc: Exception) -> Optional[float]:
 def _mark_groq_model_cooldown(model: str, exc: Exception) -> None:
     if not _is_groq_rate_limit(exc):
         return
-    wait = _parse_groq_retry_seconds(exc) or 1800.0
+    wait = _groq_cooldown_seconds(exc)
     until = time.time() + wait
     _groq_model_cooldown_until[model] = until
     text = str(exc).lower()
@@ -659,13 +704,20 @@ def reload_groq_config() -> None:
     GROQ_MODEL = (
         file_env.get("GROQ_MODEL")
         or os.getenv("GROQ_MODEL")
-        or "llama-3.1-8b-instant"
+        or "meta-llama/llama-4-scout-17b-16e-instruct"
     ).strip()
     GROQ_MODEL_FALLBACK = (
         file_env.get("GROQ_MODEL_FALLBACK")
         or os.getenv("GROQ_MODEL_FALLBACK")
         or "llama-3.1-8b-instant"
     ).strip()
+    global GROQ_MODEL_EXTRA_FALLBACKS
+    extra_raw = (
+        file_env.get("GROQ_MODEL_EXTRA_FALLBACKS")
+        or os.getenv("GROQ_MODEL_EXTRA_FALLBACKS")
+        or "llama-3.1-8b-instant,llama-3.3-70b-versatile"
+    )
+    GROQ_MODEL_EXTRA_FALLBACKS = [m.strip() for m in extra_raw.split(",") if m.strip()]
     os.environ["GROQ_MODEL"] = GROQ_MODEL
     os.environ["GROQ_MODEL_FALLBACK"] = GROQ_MODEL_FALLBACK
     reset_groq_runtime()
@@ -756,51 +808,68 @@ def _is_groq_fallback_worthy(exc: Exception) -> bool:
     return status in (403, 404, 503)
 
 
-def _groq_model_chain() -> List[str]:
-    """Orden: principal → respaldo; omite modelos en cooldown por 429."""
-    primary, fallback = GROQ_MODEL, GROQ_MODEL_FALLBACK
-    chain: List[str] = []
-    seen = set()
-    for model in (primary, fallback):
-        if model and model not in seen and _groq_model_available(model):
-            chain.append(model)
+def _groq_model_candidates() -> List[str]:
+    ordered: List[str] = []
+    seen: set[str] = set()
+    for model in (GROQ_MODEL, GROQ_MODEL_FALLBACK, *GROQ_MODEL_EXTRA_FALLBACKS):
+        if model and model not in seen:
+            ordered.append(model)
             seen.add(model)
-    return chain
+    return ordered
+
+
+def _groq_model_chain() -> List[str]:
+    """Principal → respaldos con cuotas distintas; si todos en cooldown, reintenta igual."""
+    available = [m for m in _groq_model_candidates() if _groq_model_available(m)]
+    if available:
+        return available
+    return _groq_model_candidates()
 
 
 def invoke_llm(messages):
-    """Groq con fallback transparente; cooldown solo por modelo que recibió 429."""
+    """Groq: cola RPM, reintentos con espera y modelos de respaldo distintos."""
     chain = _groq_model_chain()
     if not chain:
-        raise RuntimeError(
-            "Los modelos de IA están temporalmente al límite. Espera unos minutos e inténtalo de nuevo."
-        )
+        raise RuntimeError("No hay modelos Groq configurados (GROQ_MODEL).")
 
     last_err: Optional[Exception] = None
     for i, model in enumerate(chain):
-        try:
-            if GROQ_DEBUG and i > 0:
-                _log(f"[CEDIT] Groq fallback → {model}")
-            result = _get_groq_llm(model).invoke(messages)
-            if model == GROQ_MODEL and GROQ_MODEL in _groq_model_cooldown_until:
-                _groq_model_cooldown_until.pop(GROQ_MODEL, None)
-            return result
-        except Exception as ex:
-            last_err = ex
-            _mark_groq_model_cooldown(model, ex)
-            if _is_groq_fallback_worthy(ex) and i + 1 < len(chain):
-                next_model = chain[i + 1]
-                if _rate_limit_blocks_model(ex, next_model):
+        for attempt in range(GROQ_INVOKE_RETRIES + 1):
+            try:
+                _groq_throttle_wait()
+                if GROQ_DEBUG and (i > 0 or attempt > 0):
+                    _log(f"[CEDIT] Groq → {model} (intento {attempt + 1})")
+                result = _get_groq_llm(model).invoke(messages)
+                if model == GROQ_MODEL:
+                    _groq_model_cooldown_until.pop(GROQ_MODEL, None)
+                return result
+            except Exception as ex:
+                last_err = ex
+                if _is_groq_rate_limit(ex) and attempt < GROQ_INVOKE_RETRIES:
+                    wait = min(_groq_cooldown_seconds(ex), 30.0)
                     if GROQ_DEBUG:
-                        _log(f"[CEDIT] Misma cuota TPD en {next_model}, sin segundo intento.")
-                    raise
-                if GROQ_DEBUG:
-                    _log(f"[CEDIT] {model} no disponible, probando {next_model}…")
-                continue
-            raise
+                        _log(f"[CEDIT] 429 en {model}, reintento en {wait:.1f}s…")
+                    time.sleep(wait)
+                    continue
+                _mark_groq_model_cooldown(model, ex)
+                if _is_groq_fallback_worthy(ex) and i + 1 < len(chain):
+                    next_model = chain[i + 1]
+                    if _rate_limit_blocks_model(ex, next_model):
+                        if GROQ_DEBUG:
+                            _log(f"[CEDIT] Misma cuota en {next_model}, siguiente modelo…")
+                        break
+                    if GROQ_DEBUG:
+                        _log(f"[CEDIT] {model} falló, probando {next_model}…")
+                    break
+                raise
+        else:
+            continue
+        continue
     if last_err:
         raise last_err
-    raise RuntimeError("No hay modelos Groq configurados (GROQ_MODEL).")
+    raise RuntimeError(
+        "Los modelos de IA están temporalmente al límite. Espera unos minutos e inténtalo de nuevo."
+    )
 
 
 def public_llm_error_message(exc: Exception) -> str:
@@ -1486,7 +1555,7 @@ def run_chat(
     if not skip_usage and billable:
         check_freemium(scope, "audit")
 
-    docs = get_vectorstore().similarity_search(message, k=3)
+    docs = get_vectorstore().similarity_search(message, k=GROQ_RAG_K)
     contexto = _cap_rag_context("\n\n".join([d.page_content for d in docs]))
 
     prefix_instructions = cedit_identity_instruction(history, message, locale)
@@ -1527,7 +1596,7 @@ def run_chat(
         f"[MENSAJE DEL USUARIO]\n{message}\n[Canal: {canal}]"
     )
 
-    history_limit = 12 if (canal or "").lower() == "discord" else 6
+    history_limit = 8 if (canal or "").lower() == "discord" else 4
     messages = chat_prompt.format_messages(
         context=contexto,
         chat_history=_format_history(history, limit=history_limit),
@@ -1546,7 +1615,12 @@ def run_chat(
     mef_score = None
     if (response_mode == "audit" or mode in ("audit", "plan")) and guide_state is not None:
         combined = _combined_audit_text(message + "\n" + content, history)
-        if guide_state.phase.value >= CoachingPhase.RECOPILAR.value or len(combined) > 200:
+        # Segunda llamada Groq solo si el expediente ya tiene sustancia (ahorra TPM/RPM).
+        if (
+            guide_state.completeness_pct >= 35
+            and guide_state.phase.value >= CoachingPhase.RECOPILAR.value
+            and len(combined) > 350
+        ):
             mef_score = score_document_against_mef(combined, "conversacion.txt", normative_ctx=contexto)
 
     result = {

@@ -1,4 +1,5 @@
-# Fly.io — API CEDIT (app: cedit-api)
+# Fly.io — API CEDIT (FastAPI + uvicorn en puerto 8080 dentro del contenedor).
+# Fly proxy público → internal_port 8080 (correcto; no es un error).
 # Deploy: fly deploy --config fly.api.toml -a cedit-api
 
 app = 'cedit-api'
@@ -16,13 +17,13 @@ primary_region = 'iad'
   processes = ['app']
 
   [[http_service.checks]]
-    interval = '45s'
-    timeout = '15s'
+    interval = '30s'
+    timeout = '10s'
     grace_period = '5m'
     method = 'GET'
     path = '/api/health'
 
 [[vm]]
-  memory = '1gb'
+  memory = '2gb'
   cpu_kind = 'shared'
   cpus = 1

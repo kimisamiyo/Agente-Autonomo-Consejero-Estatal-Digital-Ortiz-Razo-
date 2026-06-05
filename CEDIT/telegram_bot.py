@@ -124,20 +124,22 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _send_replies(update, replies)
 
 
-def main() -> None:
+def build_application() -> Application | None:
     if not TOKEN:
-        print("Falta TELEGRAM_BOT_TOKEN en .env")
-        print("1. Abra Telegram y busque @BotFather")
-        print("2. /newbot -> copie el token")
-        print("3. En CEDIT/.env agregue: TELEGRAM_BOT_TOKEN=su_token")
-        raise SystemExit(1)
-
+        return None
     app = (
         Application.builder()
         .token(TOKEN)
+        .connect_timeout(60.0)
+        .read_timeout(60.0)
+        .write_timeout(60.0)
+        .pool_timeout(60.0)
+        .get_updates_connect_timeout(60.0)
+        .get_updates_read_timeout(60.0)
+        .get_updates_write_timeout(60.0)
+        .get_updates_pool_timeout(60.0)
         .build()
     )
-
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
     app.add_handler(CommandHandler("help", cmd_ayuda))
@@ -148,9 +150,38 @@ def main() -> None:
     app.add_handler(CommandHandler("reiniciar", cmd_reiniciar))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    return app
 
-    log.info("CEDIT Telegram — polling activo. Escriba al bot en Telegram.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+async def run_telegram(stop: asyncio.Event | None = None) -> None:
+    """Polling Telegram en el mismo proceso que Discord (un solo modelo en RAM)."""
+    app = build_application()
+    if app is None:
+        print("Falta TELEGRAM_BOT_TOKEN en .env")
+        return
+    stop = stop or asyncio.Event()
+    async with app:
+        await app.initialize()
+        await app.start()
+        if app.updater:
+            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        log.info("CEDIT Telegram — polling activo.")
+        await stop.wait()
+        if app.updater and app.updater.running:
+            await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
+def main() -> None:
+    if not TOKEN:
+        print("Falta TELEGRAM_BOT_TOKEN en .env")
+        print("1. Abra Telegram y busque @BotFather")
+        print("2. /newbot -> copie el token")
+        print("3. En CEDIT/.env agregue: TELEGRAM_BOT_TOKEN=su_token")
+        raise SystemExit(1)
+    stop = asyncio.Event()
+    asyncio.run(run_telegram(stop))
 
 
 if __name__ == "__main__":

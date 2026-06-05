@@ -13,7 +13,17 @@ DISCORD_BOT_INVITE = (
 DISCORD_SERVER_INVITE = os.getenv("DISCORD_SERVER_INVITE", "https://discord.gg/QANgqeZuJU")
 TELEGRAM_BOT_URL = os.getenv("TELEGRAM_BOT_URL", "https://t.me/iCEDIT_BOT")
 TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "iCEDIT_BOT")
-WEB_APP_URL = os.getenv("CEDIT_WEB_URL", "").strip()
+
+
+def _resolve_web_url() -> str:
+    for key in ("CEDIT_WEB_URL", "VITE_CEDIT_WEB_URL", "CEDIT_WEB_APP_URL"):
+        raw = os.getenv(key, "").strip()
+        if raw:
+            return raw.rstrip("/")
+    return ""
+
+
+WEB_APP_URL = _resolve_web_url()
 WEB_APP_COMING_SOON = (
     "Web CEDIT — por el momento en despliegue; el enlace público se publicará aquí."
 )

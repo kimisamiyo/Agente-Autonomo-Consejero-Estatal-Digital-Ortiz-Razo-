@@ -68,9 +68,11 @@ echo [5/6] Secretos bots...
   GROQ_API_KEY=%GROQ_API_KEY% ^
   PINECONE_API_KEY=%PINECONE_API_KEY% ^
   GROQ_MODEL=%GROQ_MODEL% ^
-  GROQ_MODEL_FALLBACK=%GROQ_MODEL_FALLBACK%
+  GROQ_MODEL_FALLBACK=%GROQ_MODEL_FALLBACK% ^
+  CEDIT_WEB_URL=%CEDIT_WEB_URL%
 
-echo [6/6] Deploy bots...
+echo [6/6] Deploy bots (2 GB RAM, 1 maquina)...
+"%FLY%" scale count 1 -a cedit-bots -y 2>nul
 "%FLY%" deploy --config fly.bots.toml -a cedit-bots
 if errorlevel 1 goto :fail
 

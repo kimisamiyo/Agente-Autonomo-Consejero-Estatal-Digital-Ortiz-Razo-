@@ -1,5 +1,7 @@
+import asyncio
 import io
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -27,7 +29,23 @@ from cedit_core import (
     public_llm_error_message,
     reload_groq_config,
     groq_runtime_status,
+    _is_groq_rate_limit,
 )
+
+_llm_sem = asyncio.Semaphore(int(os.getenv("CEDIT_API_LLM_CONCURRENCY", "1")))
+
+
+async def _run_sync(func, /, *args, **kwargs):
+    """LLM + embeddings en hilo: no bloquea health ni otras peticiones en Fly."""
+    async with _llm_sem:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
+def _raise_api_error(exc: Exception) -> None:
+    msg = public_llm_error_message(exc)
+    if _is_groq_rate_limit(exc) or "mucha demanda" in msg:
+        raise HTTPException(status_code=429, detail=msg)
+    raise HTTPException(status_code=500, detail=msg)
 from premium_store import (
     register_wallet,
     connect_wallet,
@@ -185,6 +203,12 @@ async def _on_startup():
 
 @app.get("/api/health")
 async def health():
+    """Ligero: Fly hace ping cada 45s; no cargar embeddings ni Groq aquí."""
+    return {"status": "ok", "service": "CEDIT"}
+
+
+@app.get("/api/health/detail")
+async def health_detail():
     reload_groq_config()
     return {"status": "ok", "service": "CEDIT", "groq": groq_runtime_status()}
 
@@ -404,7 +428,8 @@ async def blockchain_mint(req: BlockchainMintRequest):
         if not verify_wallet_signature(wallet, expected, req.signature):
             raise HTTPException(status_code=403, detail="Firma inválida o wallet no coincide.")
     try:
-        result = mint_registro(
+        result = await _run_sync(
+            mint_registro,
             wallet,
             req.channel or "Web",
             user_id=req.user_id or "",
@@ -497,7 +522,8 @@ async def blockchain_attest_pdf(req: BlockchainPdfMintRequest):
     except ValueError:
         pass
     try:
-        result = mint_firma_pdf(
+        result = await _run_sync(
+            mint_firma_pdf,
             wallet,
             pending["pdf_hash"],
             channel_url,
@@ -562,12 +588,15 @@ async def mef_news_sync_endpoint(
     if expected and (x_automation_key or "") != expected:
         raise HTTPException(status_code=401, detail="Clave de automatización inválida.")
     try:
-        return sync_mef_news(
+        return await _run_sync(
+            sync_mef_news,
             verify_urls=request.verify_urls,
             max_verify=min(max(request.max_verify, 1), 40),
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
+        _raise_api_error(e)
 
 
 @app.get("/api/automation/mef-news/latest")
@@ -603,7 +632,8 @@ async def chat_endpoint(
     pro = is_pro_wallet(x_wallet)
     history = [{"role": m.role, "content": m.content} for m in request.history]
     try:
-        result = run_chat(
+        result = await _run_sync(
+            run_chat,
             request.message,
             history=history,
             user_id=user_id,
@@ -618,8 +648,10 @@ async def chat_endpoint(
         return result
     except FreemiumLimitError as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
+        _raise_api_error(e)
 
 
 @app.post("/api/upload")
@@ -640,7 +672,8 @@ async def upload_pdf(
     pro = is_pro_wallet(x_wallet)
     try:
         content = await file.read()
-        result = run_audit_pdf(
+        result = await _run_sync(
+            run_audit_pdf,
             content,
             file.filename,
             user_text=user_text,
@@ -657,8 +690,10 @@ async def upload_pdf(
         raise HTTPException(status_code=402, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
+        _raise_api_error(e)
 
 
 @app.post("/api/generate-pdf")
@@ -674,7 +709,8 @@ async def generate_pdf_endpoint(
     conv_id = x_conversation_id or ""
     history = [{"role": m.role, "content": m.content} for m in (request.history or [])]
     try:
-        pdf_bytes, filename, doc_hash, plan_score = generate_plan_pdf(
+        pdf_bytes, filename, doc_hash, plan_score = await _run_sync(
+            generate_plan_pdf,
             request.content,
             title=request.title,
             project_name=request.project_name,
@@ -715,10 +751,12 @@ async def generate_pdf_endpoint(
         return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
     except FreemiumLimitError as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
+        _raise_api_error(e)
 
 
 @app.post("/api/refine-plan")
@@ -731,7 +769,8 @@ async def refine_plan_endpoint(
     pro = is_pro_wallet(x_wallet)
     history = [{"role": m.role, "content": m.content} for m in request.history]
     try:
-        result = run_refine_plan(
+        result = await _run_sync(
+            run_refine_plan,
             request.original_content,
             request.user_request,
             history=history,
@@ -743,8 +782,10 @@ async def refine_plan_endpoint(
         return result
     except FreemiumLimitError as e:
         raise HTTPException(status_code=402, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=public_llm_error_message(e))
+        _raise_api_error(e)
 
 
 @app.get("/api/whatsapp/webhook")

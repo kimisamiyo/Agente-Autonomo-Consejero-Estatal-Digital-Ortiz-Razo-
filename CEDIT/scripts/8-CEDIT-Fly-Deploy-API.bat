@@ -20,7 +20,8 @@ echo  Antes de deploy, configure secrets (pegue su .env):
 echo    scripts\fly.cmd secrets set GROQ_API_KEY=... PINECONE_API_KEY=...
 echo.
 pause
-"%FLY%" deploy --config fly.api.toml
+"%FLY%" scale count 1 -a cedit-api -y 2>nul
+"%FLY%" deploy --config fly.api.toml -a cedit-api
 echo.
 echo  Prueba: https://cedit-api.fly.dev/api/health
 pause

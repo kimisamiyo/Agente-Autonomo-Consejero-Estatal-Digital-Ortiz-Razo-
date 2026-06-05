@@ -11,4 +11,7 @@ RUN pip install --no-cache-dir -r requirements-deploy.txt
 
 COPY . .
 
+# En Fly: solo Discord (Telegram en PC con 3-CEDIT-Telegram.bat) — slash /ayuda fiable
+ENV CEDIT_FLY_DISCORD_ONLY=1
+
 CMD ["python", "run_bots.py"]

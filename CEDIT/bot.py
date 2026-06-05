@@ -1,6 +1,7 @@
 """
 Bot Discord CEDIT — mentor fluido, slash commands, PDF ≥80%, métricas.
 """
+import asyncio
 import io
 import inspect
 import sys
@@ -60,6 +61,24 @@ _inflight_messages: set[int] = set()
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+_llm_sem = asyncio.Semaphore(int(os.getenv("CEDIT_DISCORD_LLM_CONCURRENCY", "2")))
+
+
+async def _sync(func, /, *args, **kwargs):
+    """Ejecuta lógica bloqueante (LLM, embeddings) sin congelar el Gateway de Discord."""
+    async with _llm_sem:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
+async def _slash_ack(interaction: discord.Interaction, *, ephemeral: bool = False) -> None:
+    """Responde a Discord en <3 s aunque el event loop esté ocupado con IA."""
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=ephemeral)
+
+
+async def _slash_send(interaction: discord.Interaction, *, ephemeral: bool = False, **kwargs):
+    await _slash_ack(interaction, ephemeral=ephemeral)
+    return await interaction.followup.send(**kwargs)
 
 
 def _is_dm(channel) -> bool:
@@ -245,6 +264,21 @@ async def _apply_discord_profile():
         print(f"[CEDIT] No se pudo actualizar perfil (limite Discord?): {ex}")
 
 
+async def _sync_slash_commands():
+    try:
+        guild_raw = os.getenv("DISCORD_GUILD_ID", "").strip()
+        if guild_raw.isdigit():
+            guild = discord.Object(id=int(guild_raw))
+            bot.tree.copy_global_to(guild=guild)
+            synced = await bot.tree.sync(guild=guild)
+            print(f"[CEDIT] Slash commands (guild {guild_raw}): {len(synced)}")
+        else:
+            synced = await bot.tree.sync()
+            print(f"[CEDIT] Slash commands (global): {len(synced)}")
+    except Exception as ex:
+        print(f"[CEDIT] Sync warning: {ex}")
+
+
 @bot.event
 async def on_ready():
     bot.add_view(MainMenuView())
@@ -254,13 +288,22 @@ async def on_ready():
             name="Al servicio del Perú | /ayuda",
         )
     )
-    await _apply_discord_profile()
+    asyncio.create_task(_apply_discord_profile())
     print(f"[CEDIT] {bot.user} conectado")
+    asyncio.create_task(_sync_slash_commands())
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    print(f"[CEDIT] Slash error ({getattr(interaction.command, 'name', '?')}): {error}")
+    msg = f"Error interno: {public_llm_error_message(error)}"
     try:
-        synced = await bot.tree.sync()
-        print(f"[CEDIT] Slash commands: {len(synced)}")
-    except Exception as ex:
-        print(f"[CEDIT] Sync warning: {ex}")
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except discord.HTTPException:
+        pass
 
 
 @bot.tree.command(name="reiniciar_memoria", description="Borra el contexto de ESTA conversación y recupera auditorías gratis")
@@ -322,7 +365,8 @@ async def slash_mint_registro(interaction: discord.Interaction, wallet: str = ""
     await interaction.response.defer(ephemeral=True, thinking=True)
     try:
         text = build_conversation_text(sess.history)
-        result = mint_registro(
+        result = await _sync(
+            mint_registro,
             recipient,
             "Discord",
             user_id=f"discord_{interaction.user.id}",
@@ -378,8 +422,11 @@ async def slash_wallet(
 
 @bot.tree.command(name="ayuda", description="Menú principal del Consejero Estatal Digital")
 async def slash_ayuda(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        embed=welcome_embed(interaction.user), view=MainMenuView()
+    print(f"[CEDIT] /ayuda por {interaction.user} en {interaction.channel_id}", flush=True)
+    await _slash_send(
+        interaction,
+        embed=welcome_embed(interaction.user),
+        view=MainMenuView(),
     )
 
 
@@ -473,7 +520,8 @@ async def slash_auditar(interaction: discord.Interaction, consulta: str):
     try:
         sess.check_freemium("audit")
         active = sess.mode if sess.mode in ("audit", "plan") else None
-        result = run_chat(
+        result = await _sync(
+            run_chat,
             consulta,
             history=sess.history,
             user_id=f"discord_{interaction.user.id}",
@@ -523,7 +571,8 @@ async def slash_plan(interaction: discord.Interaction):
     try:
         sess.check_freemium("plan")
         meta = sess.get_audit_meta()
-        pdf_bytes, filename, doc_hash, _plan_score = generate_plan_pdf(
+        pdf_bytes, filename, doc_hash, _plan_score = await _sync(
+            generate_plan_pdf,
             content,
             title=f"Plan MEF — {sess.get_filename() or 'CEDIT'}",
             project_name=sess.get_filename().replace(".pdf", "") if sess.get_filename() else "Proyecto CEDIT",
@@ -566,7 +615,8 @@ async def slash_corregir(interaction: discord.Interaction, solicitud: str):
     is_dm = _is_dm(interaction.channel)
     try:
         sess.check_freemium("plan")
-        result = run_refine_plan(
+        result = await _sync(
+            run_refine_plan,
             original,
             solicitud,
             history=sess.history,
@@ -629,11 +679,12 @@ async def process_user_message(message: discord.Message, text: str):
                 from cedit_core import get_pdf_document_stats
 
                 try:
-                    _, pages, _chars = get_pdf_document_stats(data)
+                    _, pages, _chars = await _sync(get_pdf_document_stats, data)
                 except ValueError:
                     pages = 0
                 async with message.channel.typing():
-                    result = run_audit_pdf(
+                    result = await _sync(
+                        run_audit_pdf,
                         data,
                         att.filename,
                         user_text=text,
@@ -683,7 +734,8 @@ async def process_user_message(message: discord.Message, text: str):
             )
             if billable:
                 sess.check_freemium("audit")
-            result = run_chat(
+            result = await _sync(
+                run_chat,
                 text,
                 history=sess.history,
                 user_id=f"discord_{message.author.id}",
@@ -741,7 +793,22 @@ async def on_message(message: discord.Message):
         return
 
 
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("DISCORD_TOKEN no encontrado en .env")
+async def run_discord() -> None:
+    """Cliente Discord (proceso dedicado en Fly)."""
+    if not TOKEN:
+        print("DISCORD_TOKEN no encontrado en .env")
+        return
+    async with bot:
+        await bot.start(TOKEN)
+
+
+def main() -> None:
+    # bot.run crea su propio loop optimizado para el Gateway (más fiable que asyncio.run en Fly)
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        print("DISCORD_TOKEN no encontrado en .env")
+
+
+if __name__ == "__main__":
+    main()
