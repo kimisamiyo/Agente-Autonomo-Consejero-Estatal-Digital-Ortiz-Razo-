@@ -1,6 +1,19 @@
 # CEDIT — Consejero Estatal Digital
 
-Licencia: [MIT](../LICENSE) — Copyright (c) 2026 Mayrol Andre Ortiz Daza / Luis Razo.
+License: [MIT](../LICENSE) — Copyright (c) 2026 Mayrol Andre Ortiz Daza / Luis Razo.
+
+---
+
+## Guía de usuario / User guide
+
+| Idioma | Guía |
+|--------|------|
+| **Español** | [docs/DESPLIEGUE_GRATIS.md](docs/DESPLIEGUE_GRATIS.md) |
+| **English** | [docs/DEPLOY_FREE.md](docs/DEPLOY_FREE.md) |
+
+Atajo Windows: [`scripts/6-CEDIT-Desplegar-Guia.bat`](scripts/6-CEDIT-Desplegar-Guia.bat)
+
+---
 
 ## Inicio rápido (2 clics tras `git pull`)
 
@@ -40,5 +53,4 @@ cd CEDIT
 
 Detener API: `scripts/0-CEDIT-Detener.bat`
 
-**Despliegue local y nube (paso a paso):** [`docs/DESPLIEGUE_GRATIS.md`](docs/DESPLIEGUE_GRATIS.md)  
 Más detalle local: [`INICIO-RAPIDO.md`](INICIO-RAPIDO.md) · Alma del agente: [`SOUL.md`](SOUL.md)

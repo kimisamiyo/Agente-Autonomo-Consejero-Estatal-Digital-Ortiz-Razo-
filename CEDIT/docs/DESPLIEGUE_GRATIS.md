@@ -1,5 +1,7 @@
 # CEDIT — Guía completa: local y despliegue gratuito
 
+**Español** · [English — Free deployment guide](DEPLOY_FREE.md)
+
 **CEDIT** (Consejero Estatal Digital) — mentor MEF / Invierte.pe en **web**, **Discord**, **Telegram** y (opcional) **WhatsApp**.
 
 Esta guía cubre **dos caminos**:
