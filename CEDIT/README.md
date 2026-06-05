@@ -40,4 +40,5 @@ cd CEDIT
 
 Detener API: `scripts/0-CEDIT-Detener.bat`
 
-Más detalle: [`INICIO-RAPIDO.md`](INICIO-RAPIDO.md) · Alma del agente: [`SOUL.md`](SOUL.md)
+**Despliegue local y nube (paso a paso):** [`docs/DESPLIEGUE_GRATIS.md`](docs/DESPLIEGUE_GRATIS.md)  
+Más detalle local: [`INICIO-RAPIDO.md`](INICIO-RAPIDO.md) · Alma del agente: [`SOUL.md`](SOUL.md)

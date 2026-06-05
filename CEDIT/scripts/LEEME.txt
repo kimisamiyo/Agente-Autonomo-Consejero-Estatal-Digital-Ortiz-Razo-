@@ -11,7 +11,9 @@ CEDIT — Scripts
 WA-1-CEDIT-WhatsApp-Ayuda.bat — guia Meta (.env, webhook)
 WA-2-CEDIT-WhatsApp-Tunel.bat — tunnelmole (con API en :8001)
 
-6-CEDIT-Desplegar-Guia.bat   — abre guia markdown
+6-CEDIT-Desplegar-Guia.bat   — abre docs/DESPLIEGUE_GRATIS.md (local + nube)
+14-CEDIT-Fly-Set-Web-URL.bat — URL web en Discord (Fly)
+15-CEDIT-Fly-Redeploy-API.bat — redeploy solo API
 7-CEDIT-Fly-Login.bat        — login Fly (navegador)
 8-CEDIT-Fly-Deploy-API.bat   — launch + deploy API
 10-CEDIT-Fly-Deploy-Bots.bat — solo Discord + Telegram (API ya lista)

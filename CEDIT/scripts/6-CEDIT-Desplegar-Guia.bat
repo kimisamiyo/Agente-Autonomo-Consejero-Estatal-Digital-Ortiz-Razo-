@@ -5,7 +5,7 @@ if exist "%DOC%" (
   start "" "%DOC%"
   echo.
   echo  Guia abierta: docs\DESPLIEGUE_GRATIS.md
-  echo  Resumen: 1 Instalar, 2 Levantar, WA-2 WhatsApp local.
+  echo  Guia: Parte A local, Parte B Fly+Cloudflare, Parte C WhatsApp.
 ) else (
   echo [ERROR] No se encuentra %DOC%
 )

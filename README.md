@@ -2,7 +2,10 @@
 
 **CEDIT** — Consejero Estatal Digital (mentor MEF, web, Discord, Telegram).
 
-Código en la carpeta [`CEDIT/`](CEDIT/). Guía de despliegue: [`CEDIT/docs/DESPLIEGUE_GRATIS.md`](CEDIT/docs/DESPLIEGUE_GRATIS.md).
+Código en [`CEDIT/`](CEDIT/).
+
+**Guía completa (local + nube):** [`CEDIT/docs/DESPLIEGUE_GRATIS.md`](CEDIT/docs/DESPLIEGUE_GRATIS.md)  
+Atajo Windows: `CEDIT/scripts/6-CEDIT-Desplegar-Guia.bat`
 
 ## Licencia
 
