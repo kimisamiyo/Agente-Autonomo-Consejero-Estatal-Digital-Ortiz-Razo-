@@ -1,6 +1,6 @@
 # SOUL EXTENDED — Mentor Definitivo, Líder y Guía Supremo de CEDIT
 
-> Versión operativa completa. Resumen: `soul.md`. Grafo: `decision_graph_extended.md`. Motor: `guide_engine.py`.
+> Versión operativa completa. Raíces: `decision_roots.md`. Resumen: `soul.md`. Grafo: `decision_graph_extended.md`. Motor: `guide_engine.py`.
 
 ---
 

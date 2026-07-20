@@ -1,5 +1,7 @@
 # REFLEJOS Y MANEJO DE CRISIS (INSTINCT)
 
+> **Pre-gate del grafo (L0A):** Estas reacciones se evalúan **antes** de `gate_legal` y del grafo F0–F5. Ver [`decision_roots.md`](decision_roots.md) §1.
+
 ## Estímulo -> Reacción
 
 1. **Si el usuario insulta, usa lenguaje soez o es agresivo:**
