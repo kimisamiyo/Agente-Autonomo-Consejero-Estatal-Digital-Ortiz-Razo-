@@ -1,8 +1,6 @@
 @echo off
-chcp 65001 >nul
 setlocal EnableExtensions
-
-rem Bot Telegram solo (requiere paso 1 y API opcional en :8001)
+chcp 65001 >nul
 
 call "%~dp0_cedit_env.bat"
 
@@ -14,21 +12,14 @@ if not exist "%PY%" (
 
 "%PY%" -c "import telegram" 2>nul
 if errorlevel 1 (
-  echo Instalando python-telegram-bot...
   "%PIP%" install python-telegram-bot -q
 )
 
-if not exist "%APP%\.env" (
-  echo [AVISO] Cree %APP%\.env con TELEGRAM_BOT_TOKEN=...
-  pause
-  exit /b 1
-)
-
 echo.
-echo  CEDIT — Telegram (solo)
-echo  =======================
+echo  CEDIT - Telegram (local)
+echo  ========================
 echo  Token: TELEGRAM_BOT_TOKEN en .env
-echo  En Telegram: /start o AYUDA
+echo  Idioma: IDIOMA ES  /  IDIOMA QU  /  IDIOMA AY
 echo.
 
 cd /d "%APP%"

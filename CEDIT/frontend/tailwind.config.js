@@ -79,15 +79,15 @@ export default {
         "section-padding": "64px"
       },
       fontFamily: {
-        "label-lg": ["Inter", "sans-serif"],
-        "body-md": ["Inter", "sans-serif"],
-        "label-sm": ["Inter", "sans-serif"],
-        "headline-md": ["Montserrat", "sans-serif"],
+        "label-lg": ["Plus Jakarta Sans", "Inter", "sans-serif"],
+        "body-md": ["Plus Jakarta Sans", "Inter", "sans-serif"],
+        "label-sm": ["Plus Jakarta Sans", "Inter", "sans-serif"],
+        "headline-md": ["Montserrat", "Plus Jakarta Sans", "sans-serif"],
         "code-sm": ["Space Mono", "monospace"],
-        "headline-lg": ["Montserrat", "sans-serif"],
-        "body-lg": ["Inter", "sans-serif"],
-        "display-lg": ["Montserrat", "sans-serif"],
-        "headline-lg-mobile": ["Montserrat", "sans-serif"]
+        "headline-lg": ["Montserrat", "Plus Jakarta Sans", "sans-serif"],
+        "body-lg": ["Plus Jakarta Sans", "Inter", "sans-serif"],
+        "display-lg": ["Montserrat", "Plus Jakarta Sans", "sans-serif"],
+        "headline-lg-mobile": ["Montserrat", "Plus Jakarta Sans", "sans-serif"]
       },
       fontSize: {
         "label-lg": ["14px", { lineHeight: "20px", letterSpacing: "0.05em", fontWeight: "600" }],

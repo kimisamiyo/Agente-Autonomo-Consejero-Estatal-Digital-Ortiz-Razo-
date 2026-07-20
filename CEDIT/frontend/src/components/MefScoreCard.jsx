@@ -31,7 +31,7 @@ const MefScoreCard = ({ score, className = '' }) => {
   return (
     <div className={`cedit-fade-in ${className}`}>
       <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2 flex items-center gap-1">
-        <span className="material-symbols-outlined text-sm text-blue-800">analytics</span>
+        <span className="material-symbols-outlined text-sm text-[var(--cedit-steel)]">analytics</span>
         {t('mef.title')}
       </p>
 
@@ -43,10 +43,10 @@ const MefScoreCard = ({ score, className = '' }) => {
           <p className="text-[10px] sm:text-[11px] text-slate-600 font-semibold mt-1 leading-tight">{t('mef.currentDoc')}</p>
         </div>
         <div
-          className={`rounded-xl border-2 ${meets ? blue.statBorder : 'border-blue-200'} ${blue.statBg} p-3 sm:p-4 text-center shadow-sm min-h-[80px] flex flex-col justify-center ${meets ? 'ring-1 ring-blue-300' : ''}`}
+          className={`rounded-xl border-2 ${meets ? blue.statBorder : 'border-[var(--cedit-border)]'} ${blue.statBg} p-3 sm:p-4 text-center shadow-sm min-h-[80px] flex flex-col justify-center ${meets ? 'ring-1 ring-blue-300' : ''}`}
         >
           <p className={`text-2xl sm:text-3xl font-bold tabular-nums ${blue.stat}`}>{est}%</p>
-          <p className="text-[10px] sm:text-[11px] text-blue-800 font-semibold mt-1 leading-tight">{t('mef.withPlan')}</p>
+          <p className="text-[10px] sm:text-[11px] text-[var(--cedit-steel)] font-semibold mt-1 leading-tight">{t('mef.withPlan')}</p>
         </div>
         <div
           className={`rounded-xl border-2 ${riskStyle.border} ${riskStyle.bg} p-3 sm:p-4 text-center shadow-sm min-h-[80px] flex flex-col justify-center ${riskStyle.ring ? `ring-1 ${riskStyle.ring}` : ''}`}
@@ -60,7 +60,7 @@ const MefScoreCard = ({ score, className = '' }) => {
       </div>
 
       {meets && (
-        <p className="text-[10px] text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 mb-3 text-center font-medium">
+        <p className="text-[10px] text-[var(--cedit-steel)] bg-[var(--cedit-steel-soft)] border border-[var(--cedit-border)] rounded-lg px-3 py-2 mb-3 text-center font-medium">
           {t('mef.meetsThreshold')}
         </p>
       )}
@@ -88,7 +88,7 @@ const MefScoreCard = ({ score, className = '' }) => {
       )}
       {score.missing_points?.length > 0 && (
         <div className="mb-3 p-3 rounded-xl border border-slate-200 bg-white">
-          <p className="text-xs font-semibold text-blue-900 mb-1">{t('mef.missing')}</p>
+          <p className="text-xs font-semibold text-[var(--cedit-text)] mb-1">{t('mef.missing')}</p>
           <ul className="text-xs text-slate-700 list-disc pl-4 space-y-0.5">
             {score.missing_points.slice(0, 5).map((s, i) => (
               <li key={i}>{s}</li>
@@ -97,8 +97,8 @@ const MefScoreCard = ({ score, className = '' }) => {
         </div>
       )}
       {score.recommendations?.length > 0 && (
-        <div className="p-3 rounded-xl border border-blue-100 bg-blue-50/50">
-          <p className="text-xs font-semibold text-blue-900 mb-1">{t('mef.recommend')}</p>
+        <div className="p-3 rounded-xl border border-[var(--cedit-border)] bg-[var(--cedit-steel-soft)]">
+          <p className="text-xs font-semibold text-[var(--cedit-text)] mb-1">{t('mef.recommend')}</p>
           <ul className="text-xs text-slate-700 list-disc pl-4 space-y-0.5">
             {score.recommendations.slice(0, 4).map((s, i) => (
               <li key={i}>{s}</li>

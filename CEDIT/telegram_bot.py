@@ -45,6 +45,8 @@ SLASH_TO_TEXT = {
     "expediente": "EXPEDIENTE",
     "pdf": "PDF",
     "reiniciar": "REINICIAR",
+    "idioma": "IDIOMA",
+    "language": "IDIOMA",
 }
 
 
@@ -91,6 +93,14 @@ async def cmd_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_reiniciar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _run_text(update, "REINICIAR")
+
+
+async def cmd_idioma(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args or []
+    if args:
+        await _run_text(update, f"IDIOMA {' '.join(args)}")
+    else:
+        await _run_text(update, "IDIOMA")
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -148,6 +158,8 @@ def build_application() -> Application | None:
     app.add_handler(CommandHandler("expediente", cmd_expediente))
     app.add_handler(CommandHandler("pdf", cmd_pdf))
     app.add_handler(CommandHandler("reiniciar", cmd_reiniciar))
+    app.add_handler(CommandHandler("idioma", cmd_idioma))
+    app.add_handler(CommandHandler("language", cmd_idioma))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app

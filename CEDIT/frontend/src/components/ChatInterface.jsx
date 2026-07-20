@@ -6,11 +6,14 @@ import MefScoreCard from './MefScoreCard';
 import MentorInsightPanel from './MentorInsightPanel';
 import GuideGraphTrail from './GuideGraphTrail';
 import AuditDecisionNetwork from './AuditDecisionNetwork';
+import WelcomeConstellation from './WelcomeConstellation';
+import ExpedientePulse from './ExpedientePulse';
+import MentorBriefingModal from './MentorBriefingModal';
+import HitoToast from './HitoToast';
 import { canShowPdfOffer, isEarlyGuidePhase } from '../utils/pdfEligibility';
 import { getMentorLoadingLabel } from '../utils/mentorActivity';
 import { isAuditSession } from '../utils/auditDecisionPoints';
 import PdfLanguageModal from './PdfLanguageModal';
-import NetworksLinks from './NetworksLinks';
 import SaveConversationButton from './SaveConversationButton';
 import { saveExpediente } from '../utils/expedientesStore';
 import { attestPdfWithExtension } from '../blockchain/walletMint';
@@ -30,12 +33,12 @@ function BotMessageHeader({ mode, subtitle, modeBadge }) {
   const badge = modeBadge[mode] || modeBadge.chat;
   return (
     <div className="flex items-center gap-2 ml-2 flex-wrap">
-      <div className="w-7 h-7 bg-slate-800 rounded-lg flex items-center justify-center shadow-sm">
+      <div className="w-7 h-7 rounded-lg flex items-center justify-center shadow-sm cedit-accent-steel cedit-brand-float">
         <span className="material-symbols-outlined text-white text-[14px]" style={{ fontVariationSettings: '"FILL" 1' }}>
           assured_workload
         </span>
       </div>
-      <span className="text-xs font-semibold text-slate-700">CEDIT</span>
+      <span className="text-xs font-semibold text-[var(--cedit-text)]">CEDIT</span>
       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide ${badge.className}`}>
         {badge.label}
       </span>
@@ -77,25 +80,29 @@ const ChatInterface = ({
   activeCheckpointId = null,
   onRestoreCheckpoint,
   onNodePositionChange,
+  onOpenCmdk,
+  briefingOpen = false,
+  onBriefingClose,
+  onBriefingAvailability,
 }) => {
   const { t } = useI18n();
 
   const modeConfig = useMemo(
     () => ({
-      chat: { label: t('chat.mode.chat'), icon: 'forum', color: `${ceditCardClass('gray')} text-slate-800` },
-      audit: { label: t('chat.mode.audit'), icon: 'fact_check', color: `${ceditCardClass('blue')} text-blue-900` },
-      plan: { label: t('chat.mode.plan'), icon: 'architecture', color: `${ceditCardClass('gray')} text-slate-800` },
-      freemium: { label: t('chat.mode.freemium'), icon: 'lock', color: `${ceditCardClass('gray')} text-slate-700` },
+      chat: { label: t('chat.mode.chat'), icon: 'forum', color: `${ceditCardClass('gray')} text-[var(--cedit-text)]` },
+      audit: { label: t('chat.mode.audit'), icon: 'fact_check', color: `${ceditCardClass('steel')} text-[var(--cedit-text)]` },
+      plan: { label: t('chat.mode.plan'), icon: 'architecture', color: `${ceditCardClass('gray')} text-[var(--cedit-text)]` },
+      freemium: { label: t('chat.mode.freemium'), icon: 'lock', color: `${ceditCardClass('gray')} text-[var(--cedit-text-muted)]` },
     }),
     [t]
   );
 
   const modeBadge = useMemo(
     () => ({
-      audit: { label: t('chat.badge.audit'), className: 'bg-blue-100 text-blue-900 border border-blue-200' },
-      plan: { label: t('chat.badge.plan'), className: 'bg-slate-100 text-slate-800 border border-slate-200' },
-      freemium: { label: t('chat.badge.limit'), className: 'bg-slate-200 text-slate-800 border border-slate-300' },
-      chat: { label: t('chat.badge.chat'), className: 'bg-slate-100 text-slate-700 border border-slate-200' },
+      audit: { label: t('chat.badge.audit'), className: 'bg-[var(--cedit-primary-soft)] text-[var(--cedit-primary-deep)] border border-[color-mix(in_srgb,var(--cedit-primary)_30%,var(--cedit-border))]' },
+      plan: { label: t('chat.badge.plan'), className: 'bg-[var(--cedit-surface-2)] text-[var(--cedit-text)] border border-[var(--cedit-border)]' },
+      freemium: { label: t('chat.badge.limit'), className: 'bg-[var(--cedit-surface-3)] text-[var(--cedit-text)] border border-[var(--cedit-border-strong)]' },
+      chat: { label: t('chat.badge.chat'), className: 'bg-[var(--cedit-surface-2)] text-[var(--cedit-text-muted)] border border-[var(--cedit-border)]' },
     }),
     [t]
   );
@@ -106,22 +113,16 @@ const ChatInterface = ({
   const [generatingPdf, setGeneratingPdf] = useState(null);
   const [pdfGenPhase, setPdfGenPhase] = useState(null);
   const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
-  /** Ambos paneles del header pueden estar abiertos a la vez */
+  /** Ambos paneles pueden estar abiertos a la vez; mobileTab solo controla cuál se ve en pantallas chicas */
   const [networkExpanded, setNetworkExpanded] = useState(false);
   const [mentorExpanded, setMentorExpanded] = useState(false);
+  const [mobileTab, setMobileTab] = useState('mentor');
+  const [hito, setHito] = useState(null);
+  const [localBriefing, setLocalBriefing] = useState(false);
+  const hitoSeenRef = useRef({ phase: '', threshold: false });
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mentorPanelRef = useRef(null);
-
-  const welcomeCards = useMemo(
-    () => [
-      { theme: 'gray', t: t('chat.card.public'), d: t('chat.card.publicDesc'), action: () => onSendMessage(t('chat.prompt.invierte')) },
-      { theme: 'blue', t: t('chat.card.audit'), d: t('chat.card.auditDesc'), action: () => fileInputRef.current?.click() },
-      { theme: 'gray', t: t('chat.card.citizen'), d: t('chat.card.citizenDesc'), action: () => onSendMessage(t('chat.prompt.citizen')) },
-      { theme: 'blue', t: t('chat.card.concepts'), d: t('chat.card.conceptsDesc'), action: () => onSendMessage(t('chat.prompt.concepts')) },
-    ],
-    [t, onSendMessage]
-  );
 
   const messageCount = usage.count ?? 0;
   const freeLimit = usage.limit ?? 10;
@@ -186,10 +187,46 @@ const ChatInterface = ({
     Boolean(latestMentorInsight?.panelMarkdown || latestMentorInsight?.msg?.guideGraph);
   const showPlanHeader = showDecisionNetwork || showMentorHeader;
 
+  const guideGraph = latestMentorInsight?.msg?.guideGraph || null;
+  const mefScore = latestMentorInsight?.msg?.mefScore || null;
+  const pulsePct =
+    guideGraph?.completeness_pct ?? mefScore?.document_only_index ?? mefScore?.index ?? 0;
+  const pulsePhase = guideGraph?.phase_name || latestMentorInsight?.msg?.guidePhase || '';
+  const pulseLine = guideGraph?.mentor_message || '';
+  const showPulse = Boolean(guideGraph || (typeof pulsePct === 'number' && pulsePct > 0));
+  const briefingIsOpen = briefingOpen || localBriefing;
+
+  useEffect(() => {
+    onBriefingAvailability?.(showPulse || showMentorHeader);
+  }, [showPulse, showMentorHeader, onBriefingAvailability]);
+
   useEffect(() => {
     setNetworkExpanded(false);
     setMentorExpanded(false);
+    setMobileTab('mentor');
   }, [latestMentorInsight?.index]);
+
+  useEffect(() => {
+    if (!guideGraph && !mefScore) return;
+    const phase = guideGraph?.phase_name || '';
+    const pct = Number(pulsePct) || 0;
+    if (phase && phase !== hitoSeenRef.current.phase) {
+      const prev = hitoSeenRef.current.phase;
+      hitoSeenRef.current.phase = phase;
+      if (prev) setHito({ type: 'phase', phase });
+    }
+    if (pct >= 80 && !hitoSeenRef.current.threshold) {
+      hitoSeenRef.current.threshold = true;
+      setHito({ type: 'threshold', pct: Math.round(pct) });
+    }
+  }, [guideGraph, mefScore, pulsePct]);
+
+  const openBriefing = () => setLocalBriefing(true);
+
+  const closeBriefing = () => {
+    setLocalBriefing(false);
+    onBriefingClose?.();
+  };
 
   const getPdfLockReason = (msg) => {
     const gate = canShowPdfOffer(msg);
@@ -416,7 +453,7 @@ const ChatInterface = ({
           <span className="material-symbols-outlined text-slate-800" style={{ fontVariationSettings: '"FILL" 1' }}>assured_workload</span>
           <h1 className="font-bold text-slate-800">CEDIT</h1>
         </div>
-        <button type="button" className="p-2 rounded-lg text-slate-600" onClick={toggleSidebar}>
+        <button type="button" className="p-2 rounded-lg text-slate-600" onClick={toggleSidebar} aria-label={t('common.close')}>
           <span className="material-symbols-outlined">menu</span>
         </button>
       </header>
@@ -435,9 +472,9 @@ const ChatInterface = ({
       )}
 
       {freemiumExceeded && !isPremium && (
-        <div className={`shrink-0 w-full border-b px-4 py-3 flex justify-center z-20 cedit-mode-enter ${ceditCardClass('blue', 'rounded-none border-x-0 border-t-0')}`}>
+        <div className={`shrink-0 w-full border-b px-4 py-3 flex justify-center z-20 cedit-mode-enter ${ceditCardClass('steel', 'rounded-none border-x-0 border-t-0')}`}>
           <div className="w-full max-w-[850px] flex flex-col sm:flex-row items-center gap-3 text-center sm:text-left">
-            <div className="flex-1 text-sm text-blue-900">
+            <div className="flex-1 text-sm text-[var(--cedit-text)]">
               <strong>{t('chat.limitBanner', { count: messageCount, limit: freeLimit })}</strong>
             </div>
             <div className="flex flex-wrap gap-2 justify-center">
@@ -451,7 +488,7 @@ const ChatInterface = ({
               <button
                 type="button"
                 onClick={onOpenPremium}
-                className={ceditBtnPrimaryClass('blue').replace('rounded-xl', 'rounded-full')}
+                className={ceditBtnPrimaryClass('steel').replace('rounded-xl', 'rounded-full')}
               >
                 {t('chat.premiumPlan')}
               </button>
@@ -470,7 +507,7 @@ const ChatInterface = ({
             <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-700 ${
-                  freemiumExceeded ? 'bg-blue-800' : messageCount >= freeLimit - 2 ? 'bg-slate-500' : 'bg-blue-600'
+                  freemiumExceeded ? 'cedit-accent-steel' : messageCount >= freeLimit - 2 ? 'bg-slate-500' : 'cedit-accent-steel'
                 }`}
                 style={{ width: `${Math.min((messageCount / freeLimit) * 100, 100)}%` }}
               />
@@ -479,12 +516,12 @@ const ChatInterface = ({
               <button
                 type="button"
                 onClick={onRequestResetMemory}
-                className="text-[11px] font-bold text-white bg-blue-800 px-3 py-1 rounded-full hover:bg-blue-900"
+                className="text-[11px] font-bold text-white cedit-accent-steel px-3 py-1 rounded-full hover:opacity-95"
               >
                 {t('chat.resetMemory')}
               </button>
             ) : (
-              <button type="button" onClick={onOpenPremium} className="text-[10px] text-slate-500 hover:text-blue-700">
+              <button type="button" onClick={onOpenPremium} className="text-[10px] text-slate-500 hover:text-[var(--cedit-steel)]">
                 {t('chat.premium')}
               </button>
             )}
@@ -493,18 +530,44 @@ const ChatInterface = ({
       )}
 
       {showPlanHeader && (
-        <div className="shrink-0 w-full px-3 sm:px-5 py-2.5 border-b border-slate-200 bg-white z-10">
+        <div className="shrink-0 w-full px-3 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-700/80 bg-white dark:bg-[var(--cedit-surface)] z-10">
+          {showDecisionNetwork && showMentorHeader && (
+            <div className="cedit-seg lg:hidden max-w-[min(1440px,100%)] mx-auto mb-2">
+              <button
+                type="button"
+                className={mobileTab === 'mentor' ? 'is-on' : ''}
+                onClick={() => setMobileTab('mentor')}
+              >
+                {t('jewel.tabs.mentor')}
+              </button>
+              <button
+                type="button"
+                className={mobileTab === 'network' ? 'is-on' : ''}
+                onClick={() => setMobileTab('network')}
+              >
+                {t('jewel.tabs.network')}
+              </button>
+            </div>
+          )}
           <div
             className={`w-full max-w-[min(1440px,100%)] mx-auto flex gap-3 items-start min-h-[56px] ${
               showDecisionNetwork && showMentorHeader ? 'flex-col lg:flex-row' : 'flex-col'
             }`}
           >
             {showDecisionNetwork && (
-              <div className={showMentorHeader ? 'lg:flex-1 min-w-0 w-full' : 'w-full'}>
+              <div
+                className={`${showMentorHeader ? 'lg:flex-1 min-w-0 w-full' : 'w-full'} ${
+                  showDecisionNetwork && showMentorHeader && mobileTab === 'mentor'
+                    ? 'hidden lg:block'
+                    : ''
+                }`}
+              >
                 <AuditDecisionNetwork
                   checkpoints={decisionCheckpoints}
+                  positions={nodePositions}
                   activeCheckpointId={activeCheckpointId}
                   onRestore={handleRestoreCheckpoint}
+                  onPositionChange={onNodePositionChange}
                   expanded={networkExpanded}
                   onExpandedChange={setNetworkExpanded}
                 />
@@ -513,7 +576,11 @@ const ChatInterface = ({
             {showMentorHeader && (
               <div
                 ref={mentorPanelRef}
-                className={showDecisionNetwork ? 'lg:flex-1 min-w-0 w-full' : 'w-full'}
+                className={`${showDecisionNetwork ? 'lg:flex-1 min-w-0 w-full' : 'w-full'} ${
+                  showDecisionNetwork && showMentorHeader && mobileTab === 'network'
+                    ? 'hidden lg:block'
+                    : ''
+                }`}
               >
                 <MentorInsightPanel
                   messageKey={latestMentorInsight.index}
@@ -530,41 +597,22 @@ const ChatInterface = ({
         </div>
       )}
 
+      <ExpedientePulse
+        visible={showPulse}
+        phase={pulsePhase}
+        pct={pulsePct}
+        mentorLine={typeof pulseLine === 'string' ? pulseLine.slice(0, 140) : ''}
+        onOpenBriefing={openBriefing}
+      />
+
       <div className="flex-1 overflow-y-auto w-full px-4 md:px-gutter py-6 flex justify-center">
         <div className="w-full max-w-[850px] flex flex-col gap-6">
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center text-center mt-12 cedit-fade-in">
-              <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center shadow-lg mb-6 cedit-float">
-                <span className="material-symbols-outlined text-white text-3xl" style={{ fontVariationSettings: '"FILL" 1' }}>assured_workload</span>
-              </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-3">{t('chat.welcomeTitle')}</h2>
-              <p className="text-sm font-medium text-slate-500 mb-2">{t('app.subtitle')}</p>
-              <p className="text-slate-600 max-w-2xl mb-4">{t('chat.welcomeRole')}</p>
-              <p className="text-slate-500 text-sm max-w-2xl mb-10">{t('chat.welcomeHint')}</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
-                {welcomeCards.map((card) => (
-                  <button
-                    key={card.t}
-                    type="button"
-                    className={`text-left p-5 ${ceditCardClass(card.theme)} hover:shadow-md transition-all duration-300 cedit-card-hover`}
-                    onClick={card.action}
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={ceditIconBoxClass(card.theme, 'w-8 h-8')}>
-                        <span className="material-symbols-outlined text-white text-base">
-                          {card.theme === 'blue' ? 'fact_check' : card.theme === 'gray' ? 'groups' : 'account_balance'}
-                        </span>
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-800">{card.t}</h3>
-                    </div>
-                    <p className="text-sm text-slate-600 pl-10">{card.d}</p>
-                  </button>
-                ))}
-              </div>
-              <div className="mt-10 w-full max-w-2xl">
-                <NetworksLinks layout="compact" />
-              </div>
-            </div>
+            <WelcomeConstellation
+              onSendMessage={onSendMessage}
+              onPickPdf={() => fileInputRef.current?.click()}
+              onOpenCmdk={onOpenCmdk}
+            />
           ) : (
             messages.map((msg, index) => {
               const isLatestMentorInsight =
@@ -586,7 +634,7 @@ const ChatInterface = ({
                       <span className="material-symbols-outlined text-slate-400 text-sm">person</span>
                       <span className="text-xs text-slate-500">{t('chat.you')}</span>
                     </div>
-                    <div className="prose prose-sm max-w-none text-slate-800">
+                    <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
                   </div>
@@ -612,7 +660,7 @@ const ChatInterface = ({
                           <div className={ceditIconBoxClass('gray', 'w-9 h-9')}>
                             <span className="material-symbols-outlined text-white text-lg">description</span>
                           </div>
-                          <div className="prose prose-sm max-w-none text-slate-800 flex-1">
+                          <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100 flex-1">
                             <ReactMarkdown>{msg.content}</ReactMarkdown>
                           </div>
                         </div>
@@ -629,7 +677,8 @@ const ChatInterface = ({
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setHeaderPanelOpen('mentor');
+                                  setMentorExpanded(true);
+                                  setMobileTab('mentor');
                                   mentorPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                                 }}
                                 className="ml-auto text-[10px] font-semibold text-slate-600 hover:text-slate-900 underline"
@@ -638,7 +687,7 @@ const ChatInterface = ({
                               </button>
                             )}
                           </div>
-                          <div className="prose prose-sm max-w-none text-slate-800">
+                          <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
                             <ReactMarkdown>{chatOpinionText}</ReactMarkdown>
                           </div>
                         </div>
@@ -665,7 +714,7 @@ const ChatInterface = ({
                       )}
 
                       {!msg.isDocAck && (
-                        <div className="prose prose-sm max-w-none text-slate-800">
+                        <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
                           {msg.isAudit && msg.opinion ? (
                             msg.strengths ? (
                               <>
@@ -676,7 +725,7 @@ const ChatInterface = ({
                                     </div>
                                     <p className={`${ceditLabelClass('gray')} not-prose`}>{t('chat.strengths')}</p>
                                   </div>
-                                  <div className="prose prose-sm max-w-none text-slate-800">
+                                  <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
                                     <ReactMarkdown>{msg.strengths}</ReactMarkdown>
                                   </div>
                                 </div>
@@ -690,11 +739,11 @@ const ChatInterface = ({
 
                       {msg.isAudit && msg.opinion && !msg.isDocAck && !isEarlyGuidePhase(msg) && (msg.content?.includes('## Dictamen') || msg.fullContent?.includes('## Dictamen')) && (
                         <details className="mt-4 group cedit-fade-in">
-                          <summary className="cursor-pointer text-sm font-semibold text-slate-700 hover:text-blue-800 transition-colors list-none flex items-center gap-1">
+                          <summary className="cursor-pointer text-sm font-semibold text-slate-700 hover:text-[var(--cedit-steel)] transition-colors list-none flex items-center gap-1">
                             <span className="material-symbols-outlined text-base group-open:rotate-90 transition-transform">chevron_right</span>
                             {t('chat.fullDictamen')}
                           </summary>
-                          <div className="mt-3 pt-3 border-t border-slate-100 prose prose-sm max-w-none text-slate-800">
+                          <div className="mt-3 pt-3 border-t border-slate-100 cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
                             <ReactMarkdown>
                               {stripMefIndexMarkdown(msg.fullContent || msg.content)}
                             </ReactMarkdown>
@@ -705,12 +754,12 @@ const ChatInterface = ({
                       {getFollowUpSection(msg.content, msg.fullContent) && !isLatestMentorInsight && (
                         <div className={`mt-4 p-4 ${ceditCardClass('gray')} cedit-fade-in`}>
                           <div className="flex items-center gap-2 mb-2">
-                            <div className={ceditIconBoxClass('blue', 'w-8 h-8')}>
+                            <div className={ceditIconBoxClass('steel', 'w-8 h-8')}>
                               <span className="material-symbols-outlined text-white text-base">edit_note</span>
                             </div>
-                            <p className={ceditLabelClass('blue')}>{t('chat.pdfData')}</p>
+                            <p className={ceditLabelClass('steel')}>{t('chat.pdfData')}</p>
                           </div>
-                          <div className="prose prose-sm max-w-none text-slate-800">
+                          <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
                             <ReactMarkdown>{getFollowUpSection(msg.content, msg.fullContent)}</ReactMarkdown>
                           </div>
                         </div>
@@ -721,14 +770,14 @@ const ChatInterface = ({
                           <button
                             type="button"
                             onClick={onRequestResetMemory}
-                            className={ceditBtnPrimaryClass('blue').replace('rounded-xl', 'rounded-full')}
+                            className={ceditBtnPrimaryClass('steel').replace('rounded-xl', 'rounded-full')}
                           >
                             {t('chat.resetMemory')}
                           </button>
                           <button
                             type="button"
                             onClick={onOpenPremium}
-                            className={ceditBtnPrimaryClass('blue').replace('rounded-xl', 'rounded-full')}
+                            className={ceditBtnPrimaryClass('steel').replace('rounded-xl', 'rounded-full')}
                           >
                             {t('chat.connectWallet')}
                           </button>
@@ -739,16 +788,16 @@ const ChatInterface = ({
                       {(msg.isAudit || msg.showPdf) && !msg.isDocAck && (canShowPdfOffer(msg).show || (!isEarlyGuidePhase(msg) && msg.mefScore)) && (
                         <div className="mt-2 px-2">
                           {canShowPdfOffer(msg).show ? (
-                            <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-xl border border-blue-200 bg-blue-50/80">
-                              <span className="material-symbols-outlined text-blue-800 text-lg">picture_as_pdf</span>
-                              <span className="text-[11px] font-semibold text-blue-900 flex-1 min-w-[120px]">
+                            <div className="flex flex-wrap items-center gap-2 py-2 px-3 rounded-xl border border-[var(--cedit-border)] bg-[var(--cedit-surface-2)]">
+                              <span className="material-symbols-outlined text-[var(--cedit-steel)] text-lg">picture_as_pdf</span>
+                              <span className="text-[11px] font-semibold text-[var(--cedit-text)] flex-1 min-w-[120px]">
                                 {t('chat.pdfCompactHint')}
                               </span>
                               <button
                                 type="button"
                                 onClick={() => handleGeneratePDF(msg, index)}
                                 disabled={generatingPdf === index || freemiumExceeded}
-                                className={`${ceditBtnPrimaryClass('blue')} !py-1.5 !px-3 !text-[11px] !rounded-lg`}
+                                className={`${ceditBtnPrimaryClass('steel')} !py-1.5 !px-3 !text-[11px] !rounded-lg`}
                               >
                                 <span className="material-symbols-outlined text-sm">download</span>
                                 {generatingPdf === index
@@ -807,15 +856,22 @@ const ChatInterface = ({
                 mode={sessionMode === 'audit' ? 'audit' : sessionMode === 'plan' ? 'plan' : 'chat'}
                 modeBadge={modeBadge}
               />
-              <div className="bg-white border border-border-gray p-6 rounded-2xl rounded-tl-md shadow-sm flex items-center gap-4">
+              <div className="bg-[var(--cedit-surface)] border border-[var(--cedit-border)] p-6 rounded-2xl rounded-tl-md shadow-sm flex items-center gap-4">
                 <div className="flex gap-1.5">
                   {[0, 150, 300].map((d) => (
-                    <div key={d} className="w-2 h-2 rounded-full bg-slate-500 animate-bounce" style={{ animationDelay: `${d}ms` }} />
+                    <div
+                      key={d}
+                      className="w-2 h-2 rounded-full bg-[var(--cedit-steel)] animate-bounce"
+                      style={{ animationDelay: `${d}ms` }}
+                    />
                   ))}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-slate-700 font-medium">{loadingStatusText}</p>
-                  <p className="text-[10px] text-slate-500 mt-1 animate-pulse">
+                  <p className="text-sm text-[var(--cedit-text)] font-medium">{loadingStatusText}</p>
+                  <div className="mt-2 h-1.5 rounded-full overflow-hidden bg-[var(--cedit-surface-3)]">
+                    <div className="h-full w-2/3 cedit-shimmer-bar rounded-full" />
+                  </div>
+                  <p className="text-[10px] text-[var(--cedit-text-faint)] mt-1.5">
                     {sessionMode === 'audit' ? t('chat.reviewing') : t('chat.consulting')}
                   </p>
                 </div>
@@ -826,7 +882,7 @@ const ChatInterface = ({
         </div>
       </div>
 
-      <div className="shrink-0 border-t border-border-gray bg-background px-4 py-4 flex justify-center">
+      <div className="shrink-0 border-t border-slate-200/80 dark:border-slate-700/80 bg-transparent px-4 py-4 flex justify-center">
         <div className="w-full max-w-[850px]">
           {refineTarget && (
             <p className={`text-[11px] rounded-xl px-3 py-2 mb-2 cedit-fade-in ${ceditCardClass('gray')}`}>
@@ -834,20 +890,20 @@ const ChatInterface = ({
             </p>
           )}
           {selectedFile && (
-            <div className={`mb-2 flex items-center gap-2 text-sm rounded-xl px-3 py-2 cedit-fade-in ${ceditCardClass('blue')}`}>
-              <div className={ceditIconBoxClass('blue', 'w-7 h-7')}>
+            <div className={`mb-2 flex items-center gap-2 text-sm rounded-xl px-3 py-2 cedit-fade-in ${ceditCardClass('steel')}`}>
+              <div className={ceditIconBoxClass('steel', 'w-7 h-7')}>
                 <span className="material-symbols-outlined text-white text-sm">picture_as_pdf</span>
               </div>
               <span className="truncate flex-1 font-medium">{selectedFile.name}</span>
-              <button type="button" onClick={() => setSelectedFile(null)} className="text-slate-400 hover:text-slate-800">
+              <button type="button" onClick={() => setSelectedFile(null)} className="text-slate-400 hover:text-slate-800 dark:hover:text-white">
                 <span className="material-symbols-outlined text-sm">close</span>
               </button>
             </div>
           )}
-          <div className="bg-white border border-border-gray rounded-xl shadow-sm focus-within:ring-1 focus-within:ring-slate-400 overflow-hidden transition-shadow">
+          <div className="cedit-composer cedit-composer-jewel">
             <textarea
               id="chat-textarea"
-              className="w-full border-0 focus:ring-0 resize-none py-4 px-5 text-slate-800 placeholder:text-slate-400 min-h-[60px] bg-transparent"
+              className="w-full border-0 focus:ring-0 resize-none py-4 px-5 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 min-h-[60px] bg-transparent"
               placeholder={refineTarget ? t('chat.placeholderRefine') : t('chat.placeholder')}
               rows={1}
               value={inputValue}
@@ -855,10 +911,10 @@ const ChatInterface = ({
               onKeyDown={handleKeyDown}
               disabled={isLoading}
             />
-            <div className="flex justify-between items-center px-3 py-2 bg-slate-50 border-t border-border-gray">
+            <div className="flex justify-between items-center px-3 py-2 bg-[color-mix(in_srgb,var(--cedit-surface-2)_88%,transparent)] border-t border-[var(--cedit-border)]">
               <div className="flex gap-1 items-center">
                 <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={handleFileChange} />
-                <button type="button" className="p-2 text-slate-500 hover:bg-slate-200 rounded-lg text-xs" onClick={() => fileInputRef.current?.click()} disabled={isLoading}>
+                <button type="button" className="p-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg text-xs transition-colors" onClick={() => fileInputRef.current?.click()} disabled={isLoading}>
                   <span className="material-symbols-outlined text-sm">attach_file</span>
                 </button>
                 <ToolsDropdown
@@ -877,10 +933,19 @@ const ChatInterface = ({
                     disabled={isLoading}
                   />
                 )}
+                {!isPremium && (
+                  <span
+                    className={`cedit-quota-ring ml-1 ${
+                      freemiumExceeded ? 'is-empty' : messageCount >= freeLimit - 2 ? 'is-warn' : ''
+                    }`}
+                  >
+                    {t('jewel.composer.quota', { count: messageCount, limit: freeLimit })}
+                  </span>
+                )}
               </div>
               <button
                 type="button"
-                className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-slate-900 transition-colors"
+                className={`cedit-analyze-btn ${isLoading ? 'is-loading' : ''}`}
                 onClick={handleSend}
                 disabled={
                   (!inputValue.trim() && !selectedFile) ||
@@ -888,12 +953,29 @@ const ChatInterface = ({
                   (freemiumExceeded && !isPremium && !refineTarget)
                 }
               >
+                <span className="material-symbols-outlined text-base">
+                  {isLoading ? 'hourglass_top' : refineTarget ? 'build' : 'auto_awesome'}
+                </span>
                 {refineTarget ? t('chat.applyFix') : t('chat.analyze')}
               </button>
             </div>
           </div>
         </div>
       </div>
+
+      <HitoToast hito={hito} onDismiss={() => setHito(null)} />
+
+      <MentorBriefingModal
+        open={briefingIsOpen}
+        onClose={closeBriefing}
+        guideGraph={guideGraph}
+        mefScore={mefScore}
+        onFocusMentor={() => {
+          setMentorExpanded(true);
+          setMobileTab('mentor');
+          mentorPanelRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+        }}
+      />
 
       <PdfLanguageModal
         isOpen={pdfLangModal.open}

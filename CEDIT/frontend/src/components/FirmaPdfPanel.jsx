@@ -77,16 +77,16 @@ const FirmaPdfPanel = ({
   };
 
   const boxClass = embedded
-    ? 'flex flex-col gap-2 rounded-xl border border-blue-300 bg-blue-50/90 p-3'
-    : 'flex flex-wrap items-center gap-2 py-2 px-3 rounded-xl border border-blue-200/90 bg-blue-50/80';
+    ? 'flex flex-col gap-2 rounded-xl border border-[var(--cedit-border-strong)] bg-[var(--cedit-steel-soft)] p-3'
+    : 'flex flex-wrap items-center gap-2 py-2 px-3 rounded-xl border border-[var(--cedit-border)] bg-[var(--cedit-steel-soft)]';
 
   return (
     <div className={boxClass}>
       {embedded && (
-        <p className="text-[11px] text-blue-900 font-medium">{t('expedientes.firmaPrompt')}</p>
+        <p className="text-[11px] text-[var(--cedit-text)] font-medium">{t('expedientes.firmaPrompt')}</p>
       )}
       <div className="min-w-0 flex-1">
-        <p className="font-bold text-[11px] text-blue-900">{t('pdfFirma.title')}</p>
+        <p className="font-bold text-[11px] text-[var(--cedit-text)]">{t('pdfFirma.title')}</p>
       </div>
       {!result && pdfAttestation.pdfHash && (
         <TanenbaumRecordBlock
@@ -111,7 +111,7 @@ const FirmaPdfPanel = ({
           type="button"
           disabled={loading || !walletAddress}
           onClick={handleFirma}
-          className="text-[10px] px-2.5 py-1 rounded-lg bg-blue-800 text-white font-bold hover:bg-blue-900 disabled:opacity-50"
+          className="text-[10px] px-2.5 py-1 rounded-lg cedit-accent-steel text-white font-bold hover:opacity-95 disabled:opacity-50"
         >
           {loading ? t('pdfFirma.loading') : t('pdfFirma.cta')}
         </button>

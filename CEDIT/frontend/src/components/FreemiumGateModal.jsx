@@ -7,6 +7,10 @@ import {
   ceditIconBoxClass,
 } from '../theme/ceditPalette';
 
+/**
+ * Modal freemium / reinicio / max chats — superficie 100% tokens CEDIT
+ * (legible en claro y oscuro, sin azul chillón).
+ */
 const FreemiumGateModal = ({
   mode = 'limit',
   isOpen,
@@ -35,62 +39,91 @@ const FreemiumGateModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm cedit-fade-in"
+      className="cedit-overlay flex items-center justify-center p-4 z-[100]"
       onClick={handleBackdrop}
       role="presentation"
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200/90 overflow-hidden"
+        className="cedit-modal-sheet w-full max-w-md"
         role="dialog"
         aria-modal="true"
+        aria-labelledby="cedit-gate-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="bg-gradient-to-br from-slate-100 via-slate-50 to-blue-50/80 px-6 py-4 flex items-center gap-3 border-b border-slate-200/80">
-          <div className={ceditIconBoxClass('blue', 'w-11 h-11')}>
+        <div
+          className="px-6 py-4 flex items-center gap-3 border-b border-[var(--cedit-border)]"
+          style={{
+            background:
+              'linear-gradient(135deg, color-mix(in srgb, var(--cedit-steel) 14%, var(--cedit-surface)), var(--cedit-surface) 70%)',
+          }}
+        >
+          <div className={ceditIconBoxClass('steel', 'w-11 h-11')}>
             <span className="material-symbols-outlined text-white text-xl">{headerIcon}</span>
           </div>
-          <div>
-            <h2 className="text-slate-800 font-bold text-lg">{titles[mode] || titles.limit}</h2>
-            <p className="text-slate-500 text-xs">{t('app.subtitle')}</p>
+          <div className="min-w-0">
+            <h2
+              id="cedit-gate-title"
+              className="font-bold text-lg tracking-tight"
+              style={{ color: 'var(--cedit-text)' }}
+            >
+              {titles[mode] || titles.limit}
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--cedit-text-muted)' }}>
+              {t('app.subtitle')}
+            </p>
           </div>
         </div>
 
-        <div className="px-6 py-5 text-slate-700 text-sm leading-relaxed space-y-3 bg-gradient-to-b from-slate-50/90 to-white">
+        <div
+          className="px-6 py-5 text-sm leading-relaxed space-y-3 cedit-readable overflow-y-auto"
+          style={{ color: 'var(--cedit-text)', background: 'var(--cedit-surface)' }}
+        >
           {mode === 'limit' && (
             <>
-              <p>{t('gate.limitBody', { count: auditCount, limit })}</p>
-              <ul className="list-disc pl-5 space-y-1 text-slate-600">
+              <p style={{ color: 'var(--cedit-text)' }}>
+                {t('gate.limitBody', { count: auditCount, limit })}
+              </p>
+              <ul className="list-disc pl-5 space-y-1.5" style={{ color: 'var(--cedit-text-muted)' }}>
                 <li>
-                  <strong className="text-slate-800">{t('gate.limitWallet')}</strong>
+                  <strong style={{ color: 'var(--cedit-text)' }}>{t('gate.limitWallet')}</strong>
                 </li>
                 <li>
-                  <strong className="text-slate-800">{t('gate.limitReset')}</strong>
+                  <strong style={{ color: 'var(--cedit-text)' }}>{t('gate.limitReset')}</strong>
                 </li>
               </ul>
-              <p className={`text-xs px-3 py-2 ${ceditCardClass('gray')}`}>{t('gate.limitWarn')}</p>
+              <p className={`text-xs px-3 py-2 ${ceditCardClass('steel')}`} style={{ color: 'var(--cedit-text-muted)' }}>
+                {t('gate.limitWarn')}
+              </p>
             </>
           )}
 
           {mode === 'reset' && (
             <>
-              <p className="text-slate-700">{t('gate.resetBody', { count: auditCount, limit })}</p>
-              <p className="text-slate-600">{t('gate.resetBody2')}</p>
-              <p className={`text-xs text-slate-600 ${ceditCardClass('gray')}`}>
+              <p style={{ color: 'var(--cedit-text)' }}>
+                {t('gate.resetBody', { count: auditCount, limit })}
+              </p>
+              <p style={{ color: 'var(--cedit-text-muted)' }}>{t('gate.resetBody2')}</p>
+              <p className={`text-xs px-3 py-2.5 ${ceditCardClass('gray')}`} style={{ color: 'var(--cedit-text-muted)' }}>
                 {t('gate.resetHint')}
               </p>
             </>
           )}
 
-          {mode === 'maxChats' && <p className="text-slate-700">{t('gate.maxChatsBody')}</p>}
+          {mode === 'maxChats' && (
+            <p style={{ color: 'var(--cedit-text)' }}>{t('gate.maxChatsBody')}</p>
+          )}
         </div>
 
-        <div className="px-6 pb-6 flex flex-col gap-2 bg-slate-50/50 border-t border-slate-100">
+        <div
+          className="px-6 py-4 flex flex-col gap-2 border-t border-[var(--cedit-border)]"
+          style={{ background: 'var(--cedit-surface-2)' }}
+        >
           {mode === 'limit' && (
             <>
               <button
                 type="button"
                 onClick={onConnectWallet}
-                className={`w-full ${ceditBtnPrimaryClass('blue')}`}
+                className={`w-full ${ceditBtnPrimaryClass('steel')}`}
               >
                 <span className="material-symbols-outlined text-base">account_balance_wallet</span>
                 {t('gate.connectWallet')}
@@ -102,7 +135,7 @@ const FreemiumGateModal = ({
               >
                 {t('nav.resetMemory')}
               </button>
-              <button type="button" onClick={onClose} className={`w-full ${ceditBtnSecondaryClass()} text-slate-500`}>
+              <button type="button" onClick={onClose} className={`w-full ${ceditBtnSecondaryClass()}`}>
                 {t('gate.closeReappear')}
               </button>
             </>
@@ -113,7 +146,7 @@ const FreemiumGateModal = ({
               <button type="button" onClick={onClose} className={ceditBtnSecondaryClass()}>
                 {t('gate.cancel')}
               </button>
-              <button type="button" onClick={onConfirmReset} className={ceditBtnPrimaryClass('blue')}>
+              <button type="button" onClick={onConfirmReset} className={ceditBtnPrimaryClass('steel')}>
                 {t('gate.confirmReset')}
               </button>
             </div>
@@ -127,7 +160,7 @@ const FreemiumGateModal = ({
               <button
                 type="button"
                 onClick={onRequestReset || onConfirmReset}
-                className={ceditBtnPrimaryClass('blue')}
+                className={ceditBtnPrimaryClass('steel')}
               >
                 {t('nav.resetMemory')}
               </button>
