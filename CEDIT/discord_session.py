@@ -55,6 +55,7 @@ def _default_blob(user_id: int, is_pro: bool) -> dict:
         "history": [],
         "audit_count": 0,
         "mode": "chat",
+        "locale": "es",
         "last_plan": "",
         "filename": "",
         "owner_user_id": user_id,
@@ -131,6 +132,15 @@ class ConversationSession:
     @mode.setter
     def mode(self, value: str) -> None:
         self._blob["mode"] = value
+        self.save()
+
+    def get_locale(self) -> str:
+        loc = (self._blob.get("locale") or "es").lower()[:2]
+        return loc if loc in ("es", "qu", "ay") else "es"
+
+    def set_locale(self, locale: str) -> None:
+        loc = (locale or "es").lower()[:2]
+        self._blob["locale"] = loc if loc in ("es", "qu", "ay") else "es"
         self.save()
 
     def append(self, role: str, content: str) -> None:

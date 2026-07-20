@@ -1,0 +1,505 @@
+/**
+ * Estilos “joya” CEDIT — atmósfera, overlays, pulse, constellation.
+ * Complementa tokens base; no introduce rojo de marca.
+ */
+
+.cedit-atmosphere {
+  position: relative;
+  isolation: isolate;
+}
+.cedit-atmosphere::before {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 70% 45% at 12% 0%, var(--cedit-bg-glow), transparent 55%),
+    radial-gradient(ellipse 50% 35% at 95% 15%, var(--cedit-bg-glow-2, rgba(71, 85, 105, 0.08)), transparent 50%),
+    radial-gradient(ellipse 40% 30% at 50% 100%, rgba(91, 107, 127, 0.07), transparent 45%);
+  opacity: 0.95;
+}
+.cedit-atmosphere > * {
+  position: relative;
+  z-index: 1;
+}
+
+.cedit-glass {
+  background: color-mix(in srgb, var(--cedit-surface) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid color-mix(in srgb, var(--cedit-border) 80%, transparent);
+  box-shadow: var(--cedit-shadow);
+}
+
+.cedit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: cedit-fade-in 0.28s var(--cedit-ease) both;
+}
+html.dark .cedit-overlay {
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.cedit-modal-sheet {
+  background: var(--cedit-surface);
+  border: 1px solid var(--cedit-border);
+  border-radius: 1.25rem;
+  box-shadow: var(--cedit-shadow);
+  animation: cedit-scale-in 0.4s var(--cedit-ease) both;
+  max-height: min(86vh, 720px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  color: var(--cedit-text);
+}
+.cedit-modal-sheet h1,
+.cedit-modal-sheet h2,
+.cedit-modal-sheet h3,
+.cedit-modal-sheet p,
+.cedit-modal-sheet li,
+.cedit-modal-sheet strong {
+  color: inherit;
+}
+
+.cedit-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(400px, 94vw);
+  z-index: 90;
+  background: var(--cedit-surface);
+  border-left: 1px solid var(--cedit-border);
+  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
+  animation: cedit-drawer-in 0.35s var(--cedit-ease) both;
+  display: flex;
+  flex-direction: column;
+}
+html.dark .cedit-drawer {
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.4);
+}
+@keyframes cedit-drawer-in {
+  from { transform: translateX(100%); opacity: 0.6; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.cedit-pulse-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 1rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cedit-surface) 88%, transparent);
+  border: 1px solid var(--cedit-border);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--cedit-shadow);
+}
+.cedit-pulse-orb {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--cedit-primary);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--cedit-primary) 45%, transparent);
+  animation: cedit-node-pulse 2.2s ease-in-out infinite;
+}
+
+.cedit-hito-toast {
+  position: fixed;
+  bottom: 5.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 95;
+  min-width: min(420px, 92vw);
+  padding: 0.9rem 1.1rem;
+  border-radius: 1rem;
+  background: var(--cedit-grad-cta);
+  color: #fff;
+  box-shadow: 0 12px 40px rgba(26, 34, 46, 0.28);
+  animation: cedit-scale-in 0.45s var(--cedit-ease) both;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+html.dark .cedit-hito-toast {
+  background: var(--cedit-grad-accent);
+}
+
+.cedit-constellation {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+  width: 100%;
+}
+.cedit-constellation-compact {
+  gap: 0.55rem;
+}
+.cedit-constellation-balanced {
+  gap: 0.75rem;
+}
+@media (min-width: 768px) {
+  .cedit-constellation {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .cedit-constellation-compact {
+    gap: 0.65rem;
+  }
+  .cedit-constellation-balanced {
+    gap: 0.85rem;
+  }
+}
+.cedit-intent-card {
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  padding: 1.2rem 1.15rem;
+  border-radius: 1.15rem;
+  border: 1px solid var(--cedit-border);
+  background: var(--cedit-surface);
+  box-shadow: var(--cedit-shadow);
+  transition: transform 0.28s var(--cedit-ease), border-color 0.25s ease, box-shadow 0.28s ease;
+}
+.cedit-intent-card-compact {
+  padding: 0.75rem 0.85rem;
+  border-radius: 0.95rem;
+}
+.cedit-intent-card-balanced {
+  padding: 1rem 1rem;
+  border-radius: 1.05rem;
+}
+.cedit-intent-card-compact::before {
+  width: 90px;
+  height: 90px;
+}
+.cedit-intent-card-compact:hover {
+  transform: translateY(-2px);
+}
+.cedit-intent-card-balanced:hover {
+  transform: translateY(-3px);
+}
+
+/* ——— Movimiento bienvenida ——— */
+@keyframes cedit-aura-breathe {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.12); }
+}
+@keyframes cedit-ring-pulse {
+  0% { opacity: 0.55; transform: scale(0.92); }
+  70% { opacity: 0; transform: scale(1.35); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+@keyframes cedit-spark-orbit {
+  0% { transform: rotate(0deg) translateX(2.6rem) rotate(0deg); opacity: 0.35; }
+  50% { opacity: 0.95; }
+  100% { transform: rotate(360deg) translateX(2.6rem) rotate(-360deg); opacity: 0.35; }
+}
+@keyframes cedit-icon-glow {
+  0%, 100% { box-shadow: 0 12px 28px rgba(26, 34, 46, 0.22), 0 0 0 0 rgba(91, 107, 127, 0.25); }
+  50% { box-shadow: 0 16px 36px rgba(26, 34, 46, 0.28), 0 0 0 10px rgba(91, 107, 127, 0); }
+}
+@keyframes cedit-arrow-nudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(3px); }
+}
+@keyframes cedit-soft-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+.cedit-welcome-mark {
+  width: 5.5rem;
+  height: 5.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cedit-welcome-aura {
+  position: absolute;
+  inset: -1.4rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--cedit-steel-soft), transparent 68%);
+  animation: cedit-aura-breathe 4s ease-in-out infinite;
+  pointer-events: none;
+}
+.cedit-welcome-ring {
+  position: absolute;
+  inset: -0.35rem;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--cedit-steel) 35%, transparent);
+  animation: cedit-ring-pulse 2.8s var(--cedit-ease) infinite;
+  pointer-events: none;
+}
+.cedit-welcome-ring-delayed {
+  animation-delay: 1.4s;
+  inset: -0.7rem;
+  border-color: color-mix(in srgb, var(--cedit-steel) 22%, transparent);
+}
+.cedit-welcome-spark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px;
+  border-radius: 999px;
+  background: var(--cedit-steel);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--cedit-steel) 55%, transparent);
+  animation: cedit-spark-orbit 7s linear infinite;
+  pointer-events: none;
+}
+.cedit-welcome-spark-b {
+  animation-duration: 9s;
+  animation-direction: reverse;
+  width: 4px;
+  height: 4px;
+  opacity: 0.7;
+}
+.cedit-welcome-spark-c {
+  animation-duration: 11s;
+  animation-delay: -2s;
+  width: 3px;
+  height: 3px;
+}
+.cedit-welcome-icon {
+  animation: cedit-float 3.2s ease-in-out infinite, cedit-icon-glow 3.2s ease-in-out infinite;
+  z-index: 1;
+}
+.cedit-intent-card-live .cedit-intent-icon {
+  transition: transform 0.35s var(--cedit-ease), box-shadow 0.35s ease;
+}
+.cedit-intent-card-live:hover .cedit-intent-icon {
+  transform: translateY(-2px) scale(1.06);
+}
+.cedit-intent-card-live .cedit-intent-arrow {
+  transition: transform 0.3s var(--cedit-ease), color 0.25s ease;
+}
+.cedit-intent-card-live:hover .cedit-intent-arrow {
+  color: var(--cedit-steel);
+  animation: cedit-arrow-nudge 0.9s ease-in-out infinite;
+}
+.cedit-welcome-cmdk {
+  transition: transform 0.25s var(--cedit-ease), border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.cedit-welcome-cmdk:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--cedit-shadow);
+}
+.cedit-welcome-cmdk-icon {
+  animation: cedit-soft-bob 2.4s ease-in-out infinite;
+}
+
+.cedit-motion-2 .cedit-welcome-spark,
+.cedit-motion-2 .cedit-welcome-ring,
+.cedit-motion-3 .cedit-welcome-aura,
+.cedit-motion-3 .cedit-welcome-ring,
+.cedit-motion-3 .cedit-welcome-spark,
+.cedit-motion-3 .cedit-welcome-icon,
+.cedit-motion-3 .cedit-welcome-cmdk-icon,
+.cedit-motion-3 .cedit-intent-card-live:hover .cedit-intent-arrow {
+  animation: none !important;
+}
+.cedit-motion-3 .cedit-welcome-icon {
+  box-shadow: 0 12px 28px rgba(26, 34, 46, 0.22) !important;
+}
+
+.cedit-intent-card::before {
+  content: '';
+  position: absolute;
+  inset: auto -20% -40% auto;
+  width: 140px;
+  height: 140px;
+  border-radius: 999px;
+  background: radial-gradient(circle, var(--cedit-primary-soft), transparent 70%);
+  pointer-events: none;
+}
+.cedit-intent-card:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--cedit-steel) 45%, var(--cedit-border));
+  box-shadow: 0 14px 36px rgba(26, 34, 46, 0.12);
+}
+.cedit-intent-card:focus-visible {
+  outline: 2px solid var(--cedit-primary);
+  outline-offset: 3px;
+}
+
+.cedit-composer-jewel {
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--cedit-surface) 92%, transparent);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--cedit-border);
+  box-shadow: var(--cedit-shadow);
+  overflow: hidden;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.cedit-composer-jewel:focus-within {
+  border-color: color-mix(in srgb, var(--cedit-primary) 55%, var(--cedit-border));
+  box-shadow: 0 0 0 4px var(--cedit-primary-soft), var(--cedit-shadow);
+}
+.cedit-quota-ring {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--cedit-text-muted);
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--cedit-border);
+  background: var(--cedit-surface-2);
+}
+.cedit-quota-ring.is-warn {
+  color: var(--cedit-primary);
+  border-color: color-mix(in srgb, var(--cedit-primary) 40%, var(--cedit-border));
+  background: var(--cedit-primary-soft);
+}
+.cedit-quota-ring.is-empty {
+  color: #fff;
+  background: var(--cedit-grad-cta);
+  border-color: transparent;
+}
+
+.cedit-cmdk {
+  width: min(560px, 94vw);
+  border-radius: 1.15rem;
+  overflow: hidden;
+  background: var(--cedit-surface);
+  border: 1px solid var(--cedit-border);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.22);
+  animation: cedit-scale-in 0.32s var(--cedit-ease) both;
+}
+.cedit-cmdk input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 1rem 1.15rem;
+  font-size: 15px;
+  color: var(--cedit-text);
+}
+.cedit-cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.7rem 1.1rem;
+  color: var(--cedit-text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.cedit-cmdk-item:hover,
+.cedit-cmdk-item.is-active {
+  background: var(--cedit-primary-soft);
+}
+.cedit-cmdk-item .kbd {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--cedit-text-faint);
+  border: 1px solid var(--cedit-border);
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.cedit-seg {
+  display: flex;
+  padding: 3px;
+  border-radius: 0.75rem;
+  background: var(--cedit-surface-2);
+  border: 1px solid var(--cedit-border);
+  gap: 2px;
+}
+.cedit-seg button {
+  flex: 1;
+  border: 0;
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cedit-text-muted);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.cedit-seg button.is-on {
+  background: var(--cedit-surface);
+  color: var(--cedit-primary);
+  box-shadow: var(--cedit-shadow);
+}
+
+.cedit-jewel-fab {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.cedit-jewel-fab button {
+  width: 48px;
+  height: 48px;
+  border-radius: 1rem;
+  border: 1px solid var(--cedit-border);
+  background: var(--cedit-surface);
+  color: var(--cedit-steel);
+  box-shadow: var(--cedit-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s var(--cedit-ease), background 0.2s ease, color 0.2s ease;
+}
+.cedit-jewel-fab button:hover {
+  transform: translateY(-2px);
+  background: var(--cedit-steel-soft);
+  color: var(--cedit-primary);
+}
+
+.cedit-analyze-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-width: 7.5rem;
+  padding: 0.55rem 1.1rem;
+  border-radius: 0.75rem;
+  border: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--cedit-grad-cta);
+  box-shadow: 0 4px 14px rgba(26, 34, 46, 0.22);
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+}
+.cedit-analyze-btn:hover:not(:disabled) { opacity: 0.95; }
+.cedit-analyze-btn:active:not(:disabled) { transform: scale(0.98); }
+.cedit-analyze-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.cedit-analyze-btn.is-loading {
+  background: linear-gradient(90deg, var(--cedit-primary-deep), var(--cedit-steel), var(--cedit-primary-deep));
+  background-size: 200% 100%;
+  animation: cedit-shimmer 1.4s linear infinite;
+}
+
+.cedit-motion-3 .cedit-pulse-orb,
+.cedit-motion-3 .cedit-analyze-btn.is-loading,
+.cedit-motion-2 .cedit-pulse-orb {
+  animation: none !important;
+}
+.cedit-motion-3 .cedit-overlay,
+.cedit-motion-3 .cedit-modal-sheet,
+.cedit-motion-3 .cedit-drawer,
+.cedit-motion-3 .cedit-cmdk,
+.cedit-motion-3 .cedit-hito-toast {
+  animation: none !important;
+}

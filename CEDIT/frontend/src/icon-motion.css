@@ -1,0 +1,373 @@
+/**
+ * CEDIT — cada icono tiene su propio movimiento al interactuar.
+ * data-cedit-motion se asigna en utils/iconMotion.js
+ */
+
+@keyframes cedit-icon-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.2); }
+  100% { transform: scale(1.1); }
+}
+@keyframes cedit-icon-burst {
+  0% { transform: scale(0.7) rotate(-20deg); }
+  60% { transform: scale(1.25) rotate(8deg); }
+  100% { transform: scale(1.1) rotate(0deg); }
+}
+@keyframes cedit-icon-spin {
+  0% { transform: rotate(0deg) scale(1); }
+  100% { transform: rotate(360deg) scale(1.08); }
+}
+@keyframes cedit-icon-gear {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(90deg) scale(1.1); }
+}
+@keyframes cedit-icon-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.22); }
+}
+@keyframes cedit-icon-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px) scale(1.08); }
+}
+@keyframes cedit-icon-tilt {
+  0% { transform: rotate(0deg); }
+  30% { transform: rotate(-14deg) scale(1.1); }
+  70% { transform: rotate(10deg) scale(1.1); }
+  100% { transform: rotate(-4deg) scale(1.06); }
+}
+@keyframes cedit-icon-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-12deg); }
+  40% { transform: rotate(10deg); }
+  60% { transform: rotate(-8deg); }
+  80% { transform: rotate(6deg); }
+}
+@keyframes cedit-icon-lift {
+  0% { transform: translateY(0) scale(1); }
+  100% { transform: translateY(-6px) scale(1.12); }
+}
+@keyframes cedit-icon-flip {
+  0% { transform: rotateY(0deg) scale(1); }
+  50% { transform: rotateY(180deg) scale(1.08); }
+  100% { transform: rotateY(360deg) scale(1.05); }
+}
+@keyframes cedit-icon-nudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(5px) scale(1.08); }
+}
+@keyframes cedit-icon-spark {
+  0% { transform: scale(1) rotate(0deg); filter: brightness(1); }
+  40% { transform: scale(1.28) rotate(15deg); filter: brightness(1.35); }
+  100% { transform: scale(1.1) rotate(-5deg); filter: brightness(1.15); }
+}
+@keyframes cedit-icon-glow {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 transparent); }
+  50% { transform: scale(1.15); filter: drop-shadow(0 0 8px color-mix(in srgb, var(--cedit-steel) 55%, transparent)); }
+}
+@keyframes cedit-icon-slide {
+  0% { transform: translateX(0) scale(1); }
+  40% { transform: translateX(4px) scale(1.1); }
+  100% { transform: translateX(-2px) scale(1.06); }
+}
+@keyframes cedit-icon-fan {
+  0% { transform: scale(1) rotate(0deg); }
+  50% { transform: scale(1.15) rotate(-12deg); }
+  100% { transform: scale(1.08) rotate(8deg); }
+}
+@keyframes cedit-icon-orbit {
+  0% { transform: rotate(0deg) scale(1); }
+  100% { transform: rotate(180deg) scale(1.1); }
+}
+@keyframes cedit-icon-hammer {
+  0% { transform: rotate(0deg); }
+  30% { transform: rotate(-25deg) scale(1.1); }
+  55% { transform: rotate(12deg) scale(1.15); }
+  100% { transform: rotate(0deg) scale(1.05); }
+}
+@keyframes cedit-icon-jingle {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  25% { transform: rotate(12deg) translateY(-3px); }
+  50% { transform: rotate(-10deg) translateY(-1px); }
+  75% { transform: rotate(6deg) translateY(-3px); }
+}
+@keyframes cedit-icon-rise {
+  0% { transform: translateY(4px) scale(0.92); opacity: 0.85; }
+  100% { transform: translateY(-4px) scale(1.12); opacity: 1; }
+}
+@keyframes cedit-icon-check {
+  0% { transform: scale(0.8); }
+  50% { transform: scale(1.25); }
+  100% { transform: scale(1.1); }
+}
+@keyframes cedit-icon-drop {
+  0% { transform: translateY(-6px) scale(1.05); }
+  60% { transform: translateY(2px) scale(1.12); }
+  100% { transform: translateY(0) scale(1.06); }
+}
+@keyframes cedit-icon-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  40% { opacity: 0.35; transform: scale(0.92); }
+  70% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes cedit-icon-tap {
+  0%, 100% { transform: scale(1); }
+  35% { transform: scale(0.82); }
+  70% { transform: scale(1.18); }
+}
+@keyframes cedit-icon-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px) rotate(-4deg); }
+  40% { transform: translateX(4px) rotate(4deg); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+@keyframes cedit-icon-zap {
+  0% { transform: scale(1) rotate(0deg); }
+  30% { transform: scale(1.3) rotate(-10deg); filter: brightness(1.4); }
+  100% { transform: scale(1.1) rotate(5deg); }
+}
+@keyframes cedit-icon-shrink {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.75) rotate(8deg); }
+  100% { transform: scale(1.05); }
+}
+@keyframes cedit-icon-wave {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  25% { transform: rotate(-10deg) translateY(-2px); }
+  75% { transform: rotate(10deg) translateY(2px); }
+}
+@keyframes cedit-brand-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+.material-symbols-outlined {
+  transition:
+    transform 0.35s var(--cedit-ease),
+    color 0.25s ease,
+    filter 0.3s ease,
+    opacity 0.25s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+  transform-origin: center;
+}
+
+/* Contenedores que disparan el motion del hijo */
+.cedit-icon-hover-host:hover [data-cedit-motion],
+button:not(:disabled):hover > [data-cedit-motion],
+button:not(:disabled):hover [data-cedit-motion].cedit-icon-lead,
+a:hover > [data-cedit-motion],
+summary:hover > [data-cedit-motion],
+.cedit-nav-item:hover [data-cedit-motion],
+.cedit-side-link:hover [data-cedit-motion],
+.cedit-side-btn-ghost:hover [data-cedit-motion],
+.cedit-chip:hover [data-cedit-motion],
+.cedit-cmdk-item:hover [data-cedit-motion],
+.cedit-cmdk-item.is-active [data-cedit-motion],
+.cedit-setting-card:hover [data-cedit-motion],
+.cedit-palette-card:hover [data-cedit-motion],
+.cedit-theme-card:hover [data-cedit-motion],
+.cedit-intent-card:hover [data-cedit-motion],
+.cedit-tone-card:hover [data-cedit-motion],
+.cedit-btn-live:hover [data-cedit-motion],
+.cedit-btn-secondary:hover [data-cedit-motion],
+.cedit-analyze-btn:hover:not(:disabled) [data-cedit-motion],
+.cedit-seg button:hover [data-cedit-motion],
+.cedit-jewel-fab button:hover [data-cedit-motion],
+.cedit-composer button:hover [data-cedit-motion],
+.cedit-composer-jewel button:hover [data-cedit-motion],
+.cedit-modal-sheet button:hover > [data-cedit-motion],
+.cedit-drawer button:hover > [data-cedit-motion] {
+  /* default fallback */
+  animation: cedit-icon-pop 0.55s var(--cedit-ease) both;
+}
+
+button:not(:disabled):hover > [data-cedit-motion='burst'],
+button:not(:disabled):hover [data-cedit-motion='burst'],
+.cedit-nav-item:hover [data-cedit-motion='burst'],
+.cedit-jewel-fab button:hover [data-cedit-motion='burst'],
+*:hover > [data-cedit-motion='burst'] { animation: cedit-icon-burst 0.55s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='spin'],
+button:hover [data-cedit-motion='spin'],
+.cedit-nav-item:hover [data-cedit-motion='spin'] { animation: cedit-icon-spin 0.65s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='gear'],
+button:hover [data-cedit-motion='gear'],
+.cedit-setting-card:hover [data-cedit-motion='gear'],
+.cedit-nav-item:hover [data-cedit-motion='gear'] { animation: cedit-icon-gear 0.55s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='pulse'],
+button:hover [data-cedit-motion='pulse'],
+.cedit-nav-item:hover [data-cedit-motion='pulse'] { animation: cedit-icon-pulse 0.55s ease both; }
+
+*:hover > [data-cedit-motion='bob'],
+button:hover [data-cedit-motion='bob'],
+.cedit-nav-item:hover [data-cedit-motion='bob'] { animation: cedit-icon-bob 0.6s ease both; }
+
+*:hover > [data-cedit-motion='tilt'],
+button:hover [data-cedit-motion='tilt'],
+.cedit-nav-item:hover [data-cedit-motion='tilt'] { animation: cedit-icon-tilt 0.55s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='wiggle'],
+button:hover [data-cedit-motion='wiggle'],
+.cedit-nav-item:hover [data-cedit-motion='wiggle'] { animation: cedit-icon-wiggle 0.55s ease both; }
+
+*:hover > [data-cedit-motion='lift'],
+button:hover [data-cedit-motion='lift'],
+.cedit-nav-item:hover [data-cedit-motion='lift'] { animation: cedit-icon-lift 0.45s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='flip'],
+button:hover [data-cedit-motion='flip'],
+.cedit-nav-item:hover [data-cedit-motion='flip'] { animation: cedit-icon-flip 0.7s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='nudge'],
+button:hover [data-cedit-motion='nudge'],
+.cedit-intent-card:hover [data-cedit-motion='nudge'] { animation: cedit-icon-nudge 0.55s ease both; }
+
+*:hover > [data-cedit-motion='spark'],
+button:hover [data-cedit-motion='spark'],
+.cedit-analyze-btn:hover [data-cedit-motion='spark'] { animation: cedit-icon-spark 0.6s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='glow'],
+button:hover [data-cedit-motion='glow'] { animation: cedit-icon-glow 0.7s ease both; }
+
+*:hover > [data-cedit-motion='slide'],
+button:hover [data-cedit-motion='slide'],
+a:hover [data-cedit-motion='slide'] { animation: cedit-icon-slide 0.5s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='fan'],
+button:hover [data-cedit-motion='fan'],
+.cedit-nav-item:hover [data-cedit-motion='fan'] { animation: cedit-icon-fan 0.55s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='orbit'],
+button:hover [data-cedit-motion='orbit'] { animation: cedit-icon-orbit 0.65s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='hammer'],
+button:hover [data-cedit-motion='hammer'] { animation: cedit-icon-hammer 0.55s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='jingle'],
+button:hover [data-cedit-motion='jingle'] { animation: cedit-icon-jingle 0.55s ease both; }
+
+*:hover > [data-cedit-motion='rise'],
+button:hover [data-cedit-motion='rise'],
+.cedit-brand-float:hover [data-cedit-motion='rise'] { animation: cedit-icon-rise 0.5s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='check'],
+button:hover [data-cedit-motion='check'] { animation: cedit-icon-check 0.45s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='drop'],
+button:hover [data-cedit-motion='drop'] { animation: cedit-icon-drop 0.5s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='blink'],
+button:hover [data-cedit-motion='blink'] { animation: cedit-icon-blink 0.55s ease both; }
+
+*:hover > [data-cedit-motion='tap'],
+button:hover [data-cedit-motion='tap'],
+.cedit-jewel-fab button:hover [data-cedit-motion='tap'] { animation: cedit-icon-tap 0.45s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='shake'],
+button:hover [data-cedit-motion='shake'] { animation: cedit-icon-shake 0.45s ease both; }
+
+*:hover > [data-cedit-motion='zap'],
+button:hover [data-cedit-motion='zap'] { animation: cedit-icon-zap 0.5s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='shrink'],
+button:hover [data-cedit-motion='shrink'] { animation: cedit-icon-shrink 0.45s var(--cedit-ease) both; }
+
+*:hover > [data-cedit-motion='wave'],
+button:hover [data-cedit-motion='wave'] { animation: cedit-icon-wave 0.55s ease both; }
+
+*:hover > [data-cedit-motion='pop'],
+button:hover [data-cedit-motion='pop'],
+.cedit-nav-item:hover [data-cedit-motion='pop'] { animation: cedit-icon-pop 0.5s var(--cedit-ease) both; }
+
+/* Tinte acero en superficies claras */
+.cedit-nav-item:hover [data-cedit-motion],
+.cedit-chip:hover [data-cedit-motion],
+.cedit-cmdk-item:hover [data-cedit-motion],
+.cedit-btn-secondary:hover [data-cedit-motion],
+.cedit-side-btn-ghost:hover [data-cedit-motion],
+.cedit-composer button:hover [data-cedit-motion],
+.cedit-composer-jewel button:hover [data-cedit-motion] {
+  color: var(--cedit-steel);
+}
+
+.cedit-accent-gray [data-cedit-motion],
+.cedit-accent-steel [data-cedit-motion],
+.cedit-accent-blue [data-cedit-motion],
+.cedit-analyze-btn [data-cedit-motion],
+.cedit-btn-live.cedit-accent-steel [data-cedit-motion],
+.cedit-btn-live.cedit-accent-gray [data-cedit-motion],
+.cedit-btn-live.cedit-accent-blue [data-cedit-motion] {
+  color: #fff !important;
+}
+
+button:not(:disabled):active [data-cedit-motion],
+.cedit-nav-item:active [data-cedit-motion],
+.cedit-analyze-btn:active:not(:disabled) [data-cedit-motion] {
+  transform: scale(0.9);
+  animation: none !important;
+}
+
+.cedit-sidebar .cedit-nav-item.is-active [data-cedit-motion] {
+  animation: cedit-icon-bob 2.8s ease-in-out infinite;
+  color: var(--cedit-steel) !important;
+}
+
+.cedit-sidebar .cedit-brand-float [data-cedit-motion],
+.cedit-brand-float [data-cedit-motion] {
+  animation: cedit-brand-float 3.4s ease-in-out infinite;
+}
+
+.cedit-icon-box,
+.cedit-accent-gray,
+.cedit-accent-steel,
+.cedit-accent-blue {
+  transition: transform 0.35s var(--cedit-ease), box-shadow 0.35s ease;
+}
+button:hover .cedit-icon-box,
+.cedit-setting-card:hover .cedit-icon-box,
+.cedit-setting-card:hover .cedit-accent-gray,
+.cedit-setting-card:hover .cedit-accent-steel,
+.cedit-setting-card:hover .cedit-accent-blue {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 8px 20px rgba(26, 34, 46, 0.18);
+}
+
+.cedit-analyze-btn.is-loading [data-cedit-motion] {
+  animation: cedit-icon-spin 1.2s linear infinite !important;
+}
+
+.cedit-chip {
+  transition: transform 0.25s var(--cedit-ease), border-color 0.2s ease, background 0.2s ease;
+}
+.cedit-chip:hover {
+  transform: translateY(-1px);
+}
+
+.cedit-motion-2 .cedit-sidebar .cedit-nav-item.is-active [data-cedit-motion],
+.cedit-motion-2 .cedit-brand-float [data-cedit-motion] {
+  animation: none !important;
+}
+
+.cedit-motion-3 [data-cedit-motion],
+.cedit-motion-3 *:hover [data-cedit-motion],
+.cedit-motion-3 .cedit-analyze-btn.is-loading [data-cedit-motion] {
+  animation: none !important;
+  transform: none !important;
+  filter: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-cedit-motion],
+  .cedit-icon-box,
+  .cedit-accent-gray,
+  .cedit-accent-steel,
+  .cedit-accent-blue {
+    animation: none !important;
+    transition: none !important;
+  }
+}

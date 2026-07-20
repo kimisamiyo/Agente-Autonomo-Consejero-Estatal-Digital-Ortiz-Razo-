@@ -5,6 +5,7 @@ import ChatInterface from './components/ChatInterface';
 import SettingsView from './components/SettingsView';
 import ExpedientesView from './components/ExpedientesView';
 import NormativasView from './components/NormativasView';
+import SupportView from './components/SupportView';
 import { loadSettings, applySettingsToDocument } from './utils/userSettings';
 import { I18nProvider } from './i18n/I18nContext';
 import FreemiumGateModal from './components/FreemiumGateModal';
@@ -36,6 +37,11 @@ import {
   shouldCreateCheckpoint,
   trimCheckpointForStorage,
 } from './utils/auditDecisionPoints';
+import CommandPalette from './components/CommandPalette';
+import JewelFab from './components/JewelFab';
+import ShortcutsGuide from './components/ShortcutsGuide';
+import ToolsDrawer from './components/ToolsDrawer';
+import { startIconMotionObserver } from './utils/iconMotion';
 
 const FREE_LIMIT = 10;
 
@@ -117,6 +123,11 @@ function App() {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [cmdkOpen, setCmdkOpen] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  const [canBriefing, setCanBriefing] = useState(false);
   const [usage, setUsage] = useState({ count: 0, limit: FREE_LIMIT, remaining: FREE_LIMIT });
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [gateModal, setGateModal] = useState({ open: false, mode: 'limit' });
@@ -133,6 +144,8 @@ function App() {
   useEffect(() => {
     applySettingsToDocument(userSettings);
   }, [userSettings]);
+
+  useEffect(() => startIconMotionObserver(), []);
 
   const API_URL_DIRECT = '/api';
 
@@ -718,9 +731,46 @@ function App() {
 
   const canCreateNewChat = proActive || chats.length < FREE_CHAT_SLOTS;
 
+  useEffect(() => {
+    const onKey = (e) => {
+      const meta = e.metaKey || e.ctrlKey;
+      const tag = (e.target?.tagName || '').toLowerCase();
+      const typing = tag === 'input' || tag === 'textarea' || e.target?.isContentEditable;
+      if (meta && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCmdkOpen(true);
+        return;
+      }
+      if (meta && e.key === '/') {
+        e.preventDefault();
+        setKeysOpen(true);
+        return;
+      }
+      if (e.key === 'Escape' && !typing) {
+        setCmdkOpen(false);
+        setKeysOpen(false);
+        setToolsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const openToolsFromJewel = useCallback(() => {
+    setActiveView('chat');
+    setToolsOpen(true);
+    setCmdkOpen(false);
+  }, []);
+
+  const openBriefingFromJewel = useCallback(() => {
+    setActiveView('chat');
+    setBriefingOpen(true);
+    setCmdkOpen(false);
+  }, []);
+
   return (
     <I18nProvider locale={userSettings.locale || 'es'}>
-    <div className="bg-background text-on-surface h-screen flex overflow-hidden font-body-md">
+    <div className="cedit-app-shell bg-background text-on-surface h-screen flex overflow-hidden font-body-md">
       <ErrorBoundary>
         <Sidebar
           isOpen={isSidebarOpen}
@@ -762,6 +812,7 @@ function App() {
             onOpenPremium={() => {
               setPremiumOpen(true);
             }}
+            onGoChat={() => setActiveView('chat')}
           />
         )}
         {activeView === 'normativas' && (
@@ -771,6 +822,9 @@ function App() {
               if (prompt?.trim()) handleSendMessage(prompt);
             }}
           />
+        )}
+        {activeView === 'support' && (
+          <SupportView onGoChat={() => setActiveView('chat')} />
         )}
         {activeView === 'chat' && (
           <ChatInterface
@@ -842,9 +896,55 @@ function App() {
             activeCheckpointId={activeCheckpointId}
             onRestoreCheckpoint={restoreToCheckpoint}
             onNodePositionChange={handleNodePositionChange}
+            onOpenCmdk={() => setCmdkOpen(true)}
+            briefingOpen={briefingOpen}
+            onBriefingClose={() => setBriefingOpen(false)}
+            onBriefingAvailability={setCanBriefing}
           />
         )}
       </ErrorBoundary>
+      <JewelFab
+        hidden={cmdkOpen || keysOpen || toolsOpen || briefingOpen || premiumOpen || gateModal.open}
+        onOpenCmdk={() => setCmdkOpen(true)}
+        onOpenTools={openToolsFromJewel}
+        onOpenKeys={() => setKeysOpen(true)}
+      />
+      <CommandPalette
+        open={cmdkOpen}
+        onClose={() => setCmdkOpen(false)}
+        onNavigate={(view) => {
+          setActiveView(view);
+          setCmdkOpen(false);
+        }}
+        onNewChat={() => {
+          setActiveView('chat');
+          requestNewChat();
+        }}
+        onOpenTools={openToolsFromJewel}
+        onOpenShortcuts={() => {
+          setCmdkOpen(false);
+          setKeysOpen(true);
+        }}
+        onOpenBriefing={openBriefingFromJewel}
+        canBriefing={canBriefing}
+      />
+      <ShortcutsGuide
+        open={keysOpen}
+        onClose={() => setKeysOpen(false)}
+        onOpenCmdk={() => {
+          setKeysOpen(false);
+          setCmdkOpen(true);
+        }}
+      />
+      <ToolsDrawer
+        open={toolsOpen}
+        onClose={() => setToolsOpen(false)}
+        disabled={isLoading}
+        onSelectTool={(prompt) => {
+          setActiveView('chat');
+          if (prompt?.trim()) handleSendMessage(prompt, { isPremiumTool: true });
+        }}
+      />
       <PremiumModal
         isOpen={premiumOpen}
         onClose={() => setPremiumOpen(false)}

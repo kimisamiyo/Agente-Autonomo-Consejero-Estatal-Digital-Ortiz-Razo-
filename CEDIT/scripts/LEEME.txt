@@ -1,22 +1,28 @@
-CEDIT — Scripts
-===============
+================================================================
+  CEDIT - Solo scripts LOCALES (Consejero Estatal Digital / MEF)
+================================================================
 
-0-CEDIT-Detener.bat          — libera API (puertos 8000/8001)
-1-CEDIT-Instalar.bat         — venv + pip + npm (una vez)
-2-CEDIT-Levantar.bat         — API, Web, Discord, n8n, Telegram
+Este proyecto es CEDIT (azul), NO CADE (rojo MRE).
 
-3-CEDIT-Telegram.bat         — solo Telegram
-4-CEDIT-n8n.bat              — solo n8n
+ORDEN PARA PROBAR AHORA
+-----------------------
+  1) 1-CEDIT-Instalar.bat
+  2) 2-CEDIT-Levantar.bat     -> API :8001 + Web :5173
+  3) Opcional:
+       3-CEDIT-Discord.bat
+       4-CEDIT-Telegram.bat
+       5-CEDIT-WhatsApp.bat
+       4-CEDIT-n8n.bat        (opcional automation)
+  4) 0-CEDIT-Detener.bat
 
-WA-1-CEDIT-WhatsApp-Ayuda.bat — guia Meta (.env, webhook)
-WA-2-CEDIT-WhatsApp-Tunel.bat — tunnelmole (con API en :8001)
+Web:  http://127.0.0.1:5173
+API:  http://127.0.0.1:8001/docs
 
-6-CEDIT-Desplegar-Guia.bat   — abre docs/DESPLIEGUE_GRATIS.md (local + nube)
-14-CEDIT-Fly-Set-Web-URL.bat — URL web en Discord (Fly)
-15-CEDIT-Fly-Redeploy-API.bat — redeploy solo API
-7-CEDIT-Fly-Login.bat        — login Fly (navegador)
-8-CEDIT-Fly-Deploy-API.bat   — launch + deploy API
-10-CEDIT-Fly-Deploy-Bots.bat — solo Discord + Telegram (API ya lista)
-11-CEDIT-Web-Cloudflare-Ayuda.bat — web (Cloudflare Pages)
-9-CEDIT-Fly-Deploy-Todo.bat  — API + bots (todo de nuevo)
-DESPLIEGUE-COMANDOS-CMD.txt  — todos los cmd /c copiables
+Idiomas bots: IDIOMA ES | IDIOMA QU | IDIOMA AY
+  Discord tambien: /idioma
+  Telegram tambien: /idioma es|qu|ay
+Requisito: CEDIT\.env (desde .env.example)
+
+Se eliminaron scripts Fly/Cloudflare (cambio de distribuidor).
+Interno: _cedit_env.bat
+================================================================

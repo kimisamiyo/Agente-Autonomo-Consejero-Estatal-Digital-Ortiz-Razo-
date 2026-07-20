@@ -21,67 +21,92 @@ const TelegramIcon = () => (
 
 const NetworksLinks = ({ layout = 'sidebar' }) => {
   const { t } = useI18n();
-  const isCompact = layout === 'compact';
+  const isCompact = layout === 'compact' || layout === 'welcome';
+  const linkClass =
+    layout === 'welcome'
+      ? 'inline-flex items-center gap-2 py-2 px-3 rounded-xl text-sm font-medium border border-[var(--cedit-border)] bg-[var(--cedit-surface)] text-[var(--cedit-text)] hover:border-[var(--cedit-steel)] hover:bg-[var(--cedit-steel-soft)] transition-colors'
+      : 'inline-flex items-center gap-2 py-2 px-3 rounded-xl text-sm font-medium border border-[var(--cedit-border)] bg-[var(--cedit-surface)] text-[var(--cedit-text)] hover:border-[#5865F2] hover:text-[#5865F2] transition-colors';
 
-  const itemClass = isCompact
-    ? 'inline-flex items-center gap-2 py-2 px-3 rounded-xl text-sm font-medium border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 transition-colors'
-    : 'flex items-center gap-3 py-2 px-3 rounded-lg text-slate-600 transition-colors border border-transparent w-full';
-
-  const discordBotClass = isCompact
-    ? `${itemClass} hover:border-[#5865F2] hover:text-[#5865F2]`
-    : `${itemClass} hover:bg-[#5865F2] hover:text-white hover:border-[#5865F2] group`;
-  const telegramClass = isCompact
-    ? `${itemClass} hover:border-[#229ED9] hover:text-[#229ED9]`
-    : `${itemClass} hover:bg-[#229ED9] hover:text-white hover:border-[#229ED9] group`;
-  const serverClass = isCompact
-    ? `${itemClass} hover:border-[#5865F2] hover:text-[#5865F2]`
-    : `${itemClass} hover:bg-[#5865F2] hover:text-white hover:border-[#5865F2] group`;
-
-  const wrapperClass = isCompact
-    ? 'flex flex-wrap items-center justify-center gap-2'
-    : 'space-y-2';
-
-  return (
-    <div>
-      {!isCompact && (
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-2">
-          {t('nav.integrations')}
-        </p>
-      )}
-      <div className={wrapperClass}>
-        <a className={discordBotClass} href={DISCORD_BOT_INVITE} target="_blank" rel="noreferrer">
+  if (isCompact) {
+    return (
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <a className={linkClass} href={DISCORD_BOT_INVITE} target="_blank" rel="noreferrer">
           <DiscordIcon />
-          <span className="text-sm font-medium">{t('nav.discordBot')}</span>
+          <span>{t('nav.discordBot')}</span>
         </a>
-        <a className={telegramClass} href={TELEGRAM_BOT_URL} target="_blank" rel="noreferrer">
+        <a
+          className={
+            layout === 'welcome'
+              ? linkClass
+              : 'inline-flex items-center gap-2 py-2 px-3 rounded-xl text-sm font-medium border border-[var(--cedit-border)] bg-[var(--cedit-surface)] text-[var(--cedit-text)] hover:border-[#229ED9] hover:text-[#229ED9] transition-colors'
+          }
+          href={TELEGRAM_BOT_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
           <TelegramIcon />
-          <span className="text-sm font-medium">{t('nav.telegram')}</span>
+          <span>{t('nav.telegram')}</span>
         </a>
-        <a className={serverClass} href={DISCORD_SERVER_INVITE} target="_blank" rel="noreferrer">
+        <a className={linkClass} href={DISCORD_SERVER_INVITE} target="_blank" rel="noreferrer">
           <span
-            className={`material-symbols-outlined text-[18px] shrink-0 ${
-              isCompact ? 'text-[#5865F2]' : 'text-[#5865F2] group-hover:text-white'
+            className={`material-symbols-outlined text-[18px] ${
+              layout === 'welcome' ? 'text-[var(--cedit-steel)]' : 'text-[#5865F2]'
             }`}
           >
             groups
           </span>
+          <span>{t('nav.discordServer')}</span>
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="cedit-side-faint text-[10px] font-bold uppercase tracking-[0.14em] mb-2.5 px-2">
+        {t('nav.integrations')}
+      </p>
+      <div className="space-y-1">
+        <a
+          className="cedit-side-link flex items-center gap-3 py-2.5 px-3 rounded-xl w-full transition-colors hover:bg-[#5865F2]"
+          href={DISCORD_BOT_INVITE}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <DiscordIcon />
+          <span className="text-sm font-medium">{t('nav.discordBot')}</span>
+        </a>
+        <a
+          className="cedit-side-link flex items-center gap-3 py-2.5 px-3 rounded-xl w-full transition-colors hover:bg-[#229ED9]"
+          href={TELEGRAM_BOT_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <TelegramIcon />
+          <span className="text-sm font-medium">{t('nav.telegram')}</span>
+        </a>
+        <a
+          className="cedit-side-link flex items-center gap-3 py-2.5 px-3 rounded-xl w-full transition-colors hover:bg-[#5865F2]"
+          href={DISCORD_SERVER_INVITE}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span className="material-symbols-outlined text-[18px]">groups</span>
           <span className="text-sm font-medium">{t('nav.discordServer')}</span>
         </a>
       </div>
-      {!isCompact && (
-        WEB_APP_URL ? (
-          <a
-            className={`${itemClass} mt-2 hover:bg-slate-800 hover:text-white hover:border-slate-800`}
-            href={WEB_APP_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <span className="material-symbols-outlined text-[18px] shrink-0">language</span>
-            <span className="text-sm font-medium">{t('nav.webApp')}</span>
-          </a>
-        ) : (
-          <p className="text-xs text-slate-400 mt-3 px-2">{t('nav.webComingSoon')}</p>
-        )
+      {WEB_APP_URL ? (
+        <a
+          className="cedit-side-link flex items-center gap-3 py-2.5 px-3 rounded-xl w-full mt-1 transition-colors hover:bg-slate-700"
+          href={WEB_APP_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span className="material-symbols-outlined text-[18px]">language</span>
+          <span className="text-sm font-medium">{t('nav.webApp')}</span>
+        </a>
+      ) : (
+        <p className="cedit-side-faint text-xs mt-3 px-2 leading-relaxed">{t('nav.webComingSoon')}</p>
       )}
     </div>
   );

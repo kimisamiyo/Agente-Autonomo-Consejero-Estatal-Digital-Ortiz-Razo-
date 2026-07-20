@@ -60,6 +60,7 @@ def format_help() -> str:
         "Cuénteme su idea o proyecto y lo guiaré paso a paso.\n\n"
         "*Comandos:*\n"
         "• *AYUDA* — este menú\n"
+        "• *IDIOMA ES|QU|AY* — idioma de respuesta\n"
         "• *MÉTRICAS* — fase, índice MEF y riesgo\n"
         "• *FASE* — en qué etapa va su plan\n"
         "• *EXPEDIENTE* — avance y datos que faltan\n"

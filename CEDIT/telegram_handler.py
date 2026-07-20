@@ -15,6 +15,11 @@ from cedit_core import (
     run_audit_pdf,
     run_chat,
 )
+from cedit_locale import (
+    format_locale_changed,
+    format_locale_menu,
+    parse_locale_from_command,
+)
 from discord_mentor import is_mentor_mode
 from telegram_formatter import (
     format_expediente,
@@ -71,6 +76,13 @@ def _apply_result(sess, result: dict) -> None:
 
 
 def _handle_command(sess, cmd: str) -> List[TelegramReply]:
+    locale_choice = parse_locale_from_command(cmd)
+    if locale_choice is not None:
+        if locale_choice == "":
+            return [TelegramReply(md_to_telegram(format_locale_menu(sess.get_locale())))]
+        sess.set_locale(locale_choice)
+        return [TelegramReply(md_to_telegram(format_locale_changed(locale_choice)))]
+
     mentor = sess.get_mentor_result()
 
     if cmd in CMD_HELP:
@@ -93,7 +105,7 @@ def _handle_command(sess, cmd: str) -> List[TelegramReply]:
             return [
                 TelegramReply(
                     md_to_telegram(
-                        "Aún no hay métricas. Cuénteme su idea o adjunte un PDF de expediente."
+                        "Aun no hay metricas. Cuénteme su idea o adjunte un PDF."
                     )
                 )
             ]
@@ -101,12 +113,12 @@ def _handle_command(sess, cmd: str) -> List[TelegramReply]:
 
     if cmd in CMD_PHASE:
         if not mentor:
-            return [TelegramReply(md_to_telegram("Aún no hay fase de mentor. Escriba su proyecto."))]
+            return [TelegramReply(md_to_telegram("Aun no hay fase de mentor."))]
         return [TelegramReply(format_phase(mentor))]
 
     if cmd in CMD_EXPEDIENTE:
         if not mentor:
-            return [TelegramReply(md_to_telegram("Sin expediente aún. Cuénteme su proyecto."))]
+            return [TelegramReply(md_to_telegram("Sin expediente aun."))]
         return [TelegramReply(format_expediente(mentor))]
 
     if cmd in CMD_PDF:
@@ -159,6 +171,7 @@ def process_text_message(chat_id: str | int, text: str) -> List[TelegramReply]:
             canal="telegram",
             skip_usage=True,
             session_mode=active_mode,
+            locale=sess.get_locale(),
         )
         sess.append("user", raw)
         sess.append("assistant", result.get("display") or result.get("response", ""))
@@ -206,6 +219,7 @@ def process_document_message(
             user_id=f"telegram_{sess.chat_id}",
             canal="telegram",
             skip_usage=True,
+            locale=sess.get_locale(),
         )
         user_line = f"PDF: {name}" + (f"\n{caption}" if caption else "")
         sess.mode = "audit"

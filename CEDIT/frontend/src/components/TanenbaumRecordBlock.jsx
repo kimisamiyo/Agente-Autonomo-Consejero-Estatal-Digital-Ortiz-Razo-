@@ -58,7 +58,7 @@ const TanenbaumRecordBlock = ({
           href={explorerBase}
           target="_blank"
           rel="noreferrer"
-          className="text-[10px] font-semibold text-blue-800 underline ml-auto"
+          className="text-[10px] font-semibold text-[var(--cedit-steel)] underline ml-auto"
         >
           {t('expedientes.openExplorer')}
         </a>
@@ -87,7 +87,7 @@ const TanenbaumRecordBlock = ({
       {contractAddress && (
         <p className="text-[10px] text-slate-600">
           {t('expedientes.contractLabel')}:{' '}
-          <a href={contractUrl} target="_blank" rel="noreferrer" className="font-mono text-blue-800 underline">
+          <a href={contractUrl} target="_blank" rel="noreferrer" className="font-mono text-[var(--cedit-steel)] underline">
             {shortAddr(contractAddress)}
           </a>
         </p>
@@ -100,7 +100,7 @@ const TanenbaumRecordBlock = ({
             <code className="block text-[10px] font-mono text-slate-700 break-all mt-0.5">{txHash}</code>
           )}
           {txUrl && (
-            <a href={txUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-[11px] font-bold text-blue-800 underline">
+            <a href={txUrl} target="_blank" rel="noreferrer" className="inline-block mt-1 text-[11px] font-bold text-[var(--cedit-steel)] underline">
               {t('expedientes.viewTxTanenbaum')}
             </a>
           )}
@@ -108,7 +108,7 @@ const TanenbaumRecordBlock = ({
       )}
 
       {nftUrl && (
-        <a href={nftUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-800 underline">
+        <a href={nftUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--cedit-steel)] underline">
           <span className="material-symbols-outlined text-sm">token</span>
           {t('expedientes.viewNftTanenbaum')}
         </a>

@@ -8,13 +8,14 @@ import {
 const NODE_W = 88;
 const NODE_H = 56;
 
+/** Fases en escala acero / grafito (CEDIT). */
 const phaseColors = {
-  DESCUBRIR: { ring: '#f59e0b', fill: '#fffbeb', glow: 'rgba(245,158,11,0.35)' },
-  DIAGNOSTICAR: { ring: '#3b82f6', fill: '#eff6ff', glow: 'rgba(59,130,246,0.35)' },
-  RECOPILAR: { ring: '#6366f1', fill: '#eef2ff', glow: 'rgba(99,102,241,0.35)' },
-  EVALUAR_RIESGO: { ring: '#dc2626', fill: '#fef2f2', glow: 'rgba(220,38,38,0.35)' },
-  ORIENTAR: { ring: '#0d9488', fill: '#f0fdfa', glow: 'rgba(13,148,136,0.35)' },
-  CONSOLIDAR: { ring: '#1d4ed8', fill: '#dbeafe', glow: 'rgba(29,78,216,0.45)' },
+  DESCUBRIR: { ring: '#64748b', fill: '#f1f5f9', glow: 'rgba(100,116,139,0.35)' },
+  DIAGNOSTICAR: { ring: '#5b6b7f', fill: '#eef1f5', glow: 'rgba(91,107,127,0.4)' },
+  RECOPILAR: { ring: '#3f5f8a', fill: '#e8ecf1', glow: 'rgba(63,95,138,0.35)' },
+  EVALUAR_RIESGO: { ring: '#3a4556', fill: '#e2e6ec', glow: 'rgba(58,69,86,0.4)' },
+  ORIENTAR: { ring: '#1a222e', fill: '#f1f5f9', glow: 'rgba(26,34,46,0.3)' },
+  CONSOLIDAR: { ring: '#2c4466', fill: '#e6eaef', glow: 'rgba(44,68,102,0.45)' },
 };
 
 function getPhaseStyle(phase) {
@@ -118,25 +119,27 @@ const AuditDecisionNetwork = ({
 
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden h-full flex flex-col ${
+      className={`rounded-2xl border border-slate-200/90 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.06)] overflow-hidden h-full flex flex-col ${
         !expanded ? 'cedit-network-pulse-light' : ''
       } ${className}`}
     >
       <button
         type="button"
         onClick={toggleExpanded}
-        className="w-full flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100 bg-slate-50/80 hover:bg-slate-100 transition-colors text-left min-h-[56px]"
+        className="w-full flex items-center justify-between gap-2 px-4 py-3.5 border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-slate-100/50 hover:to-slate-100 transition-colors text-left min-h-[60px]"
       >
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="material-symbols-outlined text-slate-600 text-lg shrink-0">hub</span>
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <span className="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-700 to-slate-900 text-white flex items-center justify-center shrink-0 shadow-sm">
+            <span className="material-symbols-outlined text-[18px]">hub</span>
+          </span>
           <div className="min-w-0">
-            <p className="text-xs font-bold text-slate-800 tracking-wide">{t('decision.title')}</p>
+            <p className="text-xs font-bold text-slate-900 tracking-wide">{t('decision.title')}</p>
             <p className="text-[10px] text-slate-500 truncate mt-0.5">
               {expanded ? t('decision.subtitle') : t('decision.collapsedHint', { count: sorted.length, phase: latest?.label || '—' })}
             </p>
           </div>
         </div>
-        <span className="shrink-0 text-[10px] font-semibold text-slate-700 px-2.5 py-1 rounded-md border border-slate-200 bg-white">
+        <span className="shrink-0 text-[10px] font-semibold text-[var(--cedit-text)] px-2.5 py-1 rounded-lg border border-[var(--cedit-border)] bg-[var(--cedit-steel-soft)]">
           {expanded ? t('decision.collapse') : t('decision.expand')}
         </span>
       </button>
@@ -145,33 +148,31 @@ const AuditDecisionNetwork = ({
         <>
           <div
             ref={containerRef}
-            className="relative w-full h-[min(240px,32vh)] min-h-[200px] max-h-[320px] select-none touch-none bg-slate-50"
+            className="relative w-full h-[min(260px,34vh)] min-h-[210px] max-h-[340px] select-none touch-none"
             style={{
               backgroundImage:
-                'radial-gradient(circle at 20% 30%, rgba(148,163,184,0.2) 0%, transparent 45%), radial-gradient(circle at 80% 70%, rgba(203,213,225,0.25) 0%, transparent 40%)',
+                'radial-gradient(ellipse at 15% 20%, rgba(91,107,127,0.1) 0%, transparent 50%), radial-gradient(ellipse at 85% 75%, rgba(100,116,139,0.1) 0%, transparent 45%), linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)',
             }}
           >
-            {/* Grid neuronal */}
-            <svg className="absolute inset-0 w-full h-full opacity-30 pointer-events-none">
+            <svg className="absolute inset-0 w-full h-full opacity-40 pointer-events-none">
               <defs>
-                <pattern id="cedit-neural-grid" width="24" height="24" patternUnits="userSpaceOnUse">
-                  <circle cx="1" cy="1" r="0.6" fill="rgba(129,140,248,0.5)" />
+                <pattern id="cedit-neural-grid" width="28" height="28" patternUnits="userSpaceOnUse">
+                  <circle cx="1" cy="1" r="0.7" fill="rgba(59,130,246,0.45)" />
                 </pattern>
               </defs>
               <rect width="100%" height="100%" fill="url(#cedit-neural-grid)" />
             </svg>
 
-            {/* Conexiones sinápticas */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible">
               <defs>
                 <linearGradient id="edge-time" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#818cf8" stopOpacity="0.2" />
-                  <stop offset="50%" stopColor="#a5b4fc" stopOpacity="0.9" />
-                  <stop offset="100%" stopColor="#6366f1" stopOpacity="0.3" />
+                  <stop offset="0%" stopColor="#93c5fd" stopOpacity="0.25" />
+                  <stop offset="50%" stopColor="#5b6b7f" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#3f5f8a" stopOpacity="0.35" />
                 </linearGradient>
                 <linearGradient id="edge-lat" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.1" />
-                  <stop offset="100%" stopColor="#818cf8" stopOpacity="0.4" />
+                  <stop offset="0%" stopColor="#94a3b8" stopOpacity="0.15" />
+                  <stop offset="100%" stopColor="#5b6b7f" stopOpacity="0.45" />
                 </linearGradient>
               </defs>
               {edges.map((edge) => {
@@ -187,14 +188,14 @@ const AuditDecisionNetwork = ({
                     <path
                       d={d}
                       fill="none"
-                      stroke={isActive ? '#fbbf24' : isLat ? 'url(#edge-lat)' : 'url(#edge-time)'}
-                      strokeWidth={isActive ? 2.5 : isLat ? 1 : 1.8}
+                      stroke={isActive ? '#3f5f8a' : isLat ? 'url(#edge-lat)' : 'url(#edge-time)'}
+                      strokeWidth={isActive ? 2.6 : isLat ? 1 : 1.9}
                       strokeDasharray={isLat ? '4 6' : 'none'}
                       className={isActive ? 'animate-pulse' : ''}
-                      opacity={isLat ? 0.5 : 0.85}
+                      opacity={isLat ? 0.55 : 0.9}
                     />
                     {isActive && (
-                      <circle r="3" fill="#fbbf24" className="animate-pulse">
+                      <circle r="3.5" fill="#3f5f8a" className="animate-pulse">
                         <animateMotion dur="2s" repeatCount="indefinite" path={d} />
                       </circle>
                     )}
@@ -236,26 +237,26 @@ const AuditDecisionNetwork = ({
                   }}
                 >
                   <div
-                    className={`w-full h-full rounded-xl border-2 flex flex-col items-center justify-center px-1 text-center transition-transform ${
-                      isActive ? 'scale-110 ring-2 ring-amber-400' : isHover ? 'scale-105' : ''
-                    } ${isLatest ? 'animate-pulse' : ''}`}
+                    className={`w-full h-full rounded-xl border-2 flex flex-col items-center justify-center px-1 text-center transition-transform backdrop-blur-sm ${
+                      isActive ? 'scale-110 ring-2 ring-slate-400' : isHover ? 'scale-105' : ''
+                    } ${isLatest ? 'cedit-node-pulse' : ''}`}
                     style={{
                       borderColor: style.ring,
                       backgroundColor: style.fill,
                     }}
                   >
-                    <span className="text-[9px] font-black uppercase tracking-tight text-black leading-none">
+                    <span className="text-[9px] font-black uppercase tracking-tight text-slate-900 leading-none">
                       {cp.label?.slice(0, 12)}
                     </span>
-                    <span className="text-[8px] font-semibold text-slate-900 mt-0.5 leading-tight line-clamp-2">
+                    <span className="text-[8px] font-semibold text-slate-700 mt-0.5 leading-tight line-clamp-2">
                       {cp.subtitle}
                     </span>
                   </div>
 
                   {(isHover || isActive) && (
-                    <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-40 w-[200px]">
-                      <div className="rounded-xl border border-slate-200 bg-white text-slate-800 p-2.5 shadow-lg">
-                        <p className="text-[9px] text-slate-500 font-bold uppercase">{t('decision.node')}</p>
+                    <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 z-40 w-[210px]">
+                      <div className="rounded-xl border border-slate-200 bg-white/95 backdrop-blur text-slate-800 p-2.5 shadow-xl shadow-slate-900/10">
+                        <p className="text-[9px] text-[var(--cedit-steel)] font-bold uppercase tracking-wide">{t('decision.node')}</p>
                         <p className="text-[10px] mt-1 line-clamp-2">{cp.userPrompt}</p>
                         {cp.mentorMessage && (
                           <p className="text-[9px] text-slate-500 mt-1 italic line-clamp-2">{cp.mentorMessage}</p>
@@ -266,7 +267,7 @@ const AuditDecisionNetwork = ({
                             e.stopPropagation();
                             onRestore?.(cp);
                           }}
-                          className="mt-2 w-full py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-900 text-[10px] font-bold flex items-center justify-center gap-1"
+                          className="mt-2 w-full py-1.5 rounded-lg bg-gradient-to-r from-slate-600 to-slate-900 hover:opacity-95 text-white text-[10px] font-bold flex items-center justify-center gap-1 shadow-sm"
                         >
                           <span className="material-symbols-outlined text-sm">history</span>
                           {t('decision.restore')}

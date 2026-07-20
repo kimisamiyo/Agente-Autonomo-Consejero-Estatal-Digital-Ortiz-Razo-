@@ -430,6 +430,32 @@ async def slash_ayuda(interaction: discord.Interaction):
     )
 
 
+@bot.tree.command(name="idioma", description="Cambiar idioma de respuesta (ES / QU / AY)")
+@app_commands.describe(codigo="Idioma: es, qu o ay. Sin elegir muestra el menu.")
+@app_commands.choices(
+    codigo=[
+        app_commands.Choice(name="Español (ES)", value="es"),
+        app_commands.Choice(name="Quechua (QU)", value="qu"),
+        app_commands.Choice(name="Aymara (AY)", value="ay"),
+    ]
+)
+async def slash_idioma(interaction: discord.Interaction, codigo: str | None = None):
+    from cedit_locale import format_locale_changed, format_locale_menu
+
+    sess = get_session(interaction.channel_id, interaction.user.id, _is_dm(interaction.channel))
+    if not codigo:
+        await interaction.response.send_message(
+            format_locale_menu(sess.get_locale()),
+            ephemeral=True,
+        )
+        return
+    sess.set_locale(codigo)
+    await interaction.response.send_message(
+        format_locale_changed(codigo).replace("*", "**"),
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(name="ciudadano", description="Orientación para ciudadanos — derechos y trámites")
 async def slash_ciudadano(interaction: discord.Interaction):
     await interaction.response.send_message(
@@ -528,6 +554,7 @@ async def slash_auditar(interaction: discord.Interaction, consulta: str):
             canal="discord",
             skip_usage=True,
             session_mode=active,
+            locale=sess.get_locale(),
         )
         sess.append("user", consulta)
         sess.append("assistant", _assistant_history_content(result))
@@ -670,6 +697,24 @@ async def process_user_message(message: discord.Message, text: str):
             await message.reply(embed=welcome_embed(message.author), view=MainMenuView(), mention_author=False)
             return
 
+        from cedit_locale import (
+            format_locale_changed,
+            format_locale_menu,
+            parse_locale_from_command,
+        )
+
+        locale_choice = parse_locale_from_command(text)
+        if locale_choice is not None:
+            if locale_choice == "":
+                await message.reply(format_locale_menu(sess.get_locale()), mention_author=False)
+            else:
+                sess.set_locale(locale_choice)
+                await message.reply(
+                    format_locale_changed(locale_choice).replace("*", "**"),
+                    mention_author=False,
+                )
+            return
+
         pdf_attachments = [a for a in message.attachments if a.filename.lower().endswith(".pdf")]
         if pdf_attachments:
             try:
@@ -691,6 +736,7 @@ async def process_user_message(message: discord.Message, text: str):
                         user_id=f"discord_{message.author.id}",
                         canal="discord",
                         skip_usage=True,
+                        locale=sess.get_locale(),
                     )
                 sess.mode = "audit"
                 sess.append("user", f"PDF: {att.filename}" + (f"\n{text}" if text else ""))
@@ -742,6 +788,7 @@ async def process_user_message(message: discord.Message, text: str):
                 canal="discord",
                 skip_usage=True,
                 session_mode=active_mode,
+                locale=sess.get_locale(),
             )
         sess.append("user", text)
         sess.append("assistant", _assistant_history_content(result))
