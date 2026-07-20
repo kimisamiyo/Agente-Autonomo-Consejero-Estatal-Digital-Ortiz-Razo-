@@ -1,6 +1,7 @@
 # GRAFO DE DECISIONES CEDIT — De la idea vaga al plan aprobable
 
-> **Versión suprema multi-nodo:** [`decision_graph_extended.md`](decision_graph_extended.md)  
+> **Raíces de enrutamiento (primer contacto y turnos siguientes):** [`decision_roots.md`](decision_roots.md)  
+> **Versión extendida:** [`decision_graph_extended.md`](decision_graph_extended.md)  
 > Implementación: `guide_engine.py` · UI: `GuideGraphTrail.jsx` · Personalidad: `soul.md`.
 
 ---
@@ -19,11 +20,16 @@ Cada nodo responde: *¿Qué sé? · ¿Qué falta? · ¿Qué pregunto ahora? · �
 
 ```mermaid
 flowchart TB
-    START([Entrada: texto o PDF]) --> GATE{¿Legal y legítimo?}
-    GATE -->|No| REJECT[Rechazo amable + redirección]
-    GATE -->|Sí| ROLE{¿Rol?}
+    START([Entrada: texto o PDF]) --> INST{instinct.md}
+    INST -->|Ilícito / código / política| REJECT[Rechazo amable + redirección]
+    INST -->|OK| GATE{gate_legal}
+    GATE -->|No| REJECT
+    GATE -->|Sí| ROLE{role_detect}
     ROLE -->|Ciudadano / normativa| NORM[Chat normativo — sin cupo]
-    ROLE -->|Expediente / plan| M0
+    ROLE -->|Expediente / plan| SESS{¿Sesión mentoría activa?}
+    SESS -->|Sí| M0
+    SESS -->|No| MODE[plan vs audit]
+    MODE --> M0
 
     subgraph FASES["Fases de coaching MEF"]
         M0[F0 DESCUBRIR<br/>Idea ≤30 palabras o sin datos]
@@ -34,8 +40,9 @@ flowchart TB
         M5[F5 CONSOLIDAR<br/>Listo para PDF]
     end
 
-    M0 -->|≥ problema + entidad| M1
+    M0 -->|problema + actor| M1
     M1 -->|+ ubicación aprox.| M2
+    START -->|7/7 datos en msg 1| M3
     M2 -->|≥5/7 datos críticos| M3
     M2 -->|faltan datos| M2
     M3 --> RISK{Índice riesgo}
@@ -44,6 +51,7 @@ flowchart TB
     RISK -->|<40 BAJO| M4
     FATAL --> M4
     WARN --> M4
+    M3 -->|riesgo en historial| M4
     M4 --> READY{Completitud ≥70%?}
     READY -->|No| M2
     READY -->|Sí| M5
@@ -93,7 +101,7 @@ flowchart TB
 | Ubigeo / región | Pregunta directa |
 | Componente Invierte.pe (preliminar) | Sugerir según tipo de obra/servicio |
 
-**Transición a F2:** cuando hay al menos **problema + entidad + ubicación aproximada**.
+**Transición a F2:** cuando hay **problema + entidad + ubicación aproximada** (región, distrito o departamento).
 
 ---
 
@@ -267,13 +275,20 @@ El mentor **narrativiza** las tres cifras en **## Escenario pessimista y riesgo*
 
 ## 8. Reglas de transición (resumen ejecutivo)
 
+Ver matriz completa en [`decision_roots.md`](decision_roots.md) §3–§4.
+
 ```
-SI palabras_usuario < 30 Y sin_pdf → F0
-SI problema Y entidad Y ubicación → F1 completado → F2
-SI datos_críticos < 5 → permanecer F2
-SI datos_críticos ≥ 5 → F3 (riesgo obligatorio)
-SI riesgo calculado → F4 (orientación)
-SI completitud ≥ 70% → F5 (ofrecer PDF)
+SI instinct/ilícito → REJECT (sin grafo)
+SI modo chat → NORM (sin cupo, sin F0–F5)
+SI sesión mentoría activa → forzar grafo aunque el mensaje sea breve
+SI palabras_usuario ≤ 30 Y sin_pdf → F0
+SI 7/7 datos en primer mensaje → F3 (fast path; nunca saltar riesgo)
+SI problema Y entidad Y NO ubicación → F1
+SI problema Y entidad Y ubicación → F2
+SI datos_críticos < 5 → permanecer F2 (sub-nodo data_* activo)
+SI datos_críticos ≥ 5 Y sin riesgo en historial → F3
+SI riesgo en historial Y completitud < 70% → F4 o F2 (rellenar huecos)
+SI riesgo + orientación Y completitud ≥ 70% → F5 (ofrecer PDF)
 SI pdf_generado → re-score → Mis expedientes si ≥80%
 ```
 
@@ -287,4 +302,4 @@ SI pdf_generado → re-score → Mis expedientes si ≥80%
 
 ---
 
-**Versión del grafo:** 1.0 — Guía / Líder / Mentor / Fatalista responsable
+**Versión del grafo:** 2.0 — Alineado con `decision_roots.md` y motor v4

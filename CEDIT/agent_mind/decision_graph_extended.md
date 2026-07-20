@@ -1,7 +1,7 @@
 # GRAFO DE DECISIONES EXTENDED — Arquitectura Suprema CEDIT
 
-> Versión maestra multi-nodo, multi-perfil, multi-sector.  
-> Resumen: `decision_graph.md` · Motor: `guide_engine.py` · Visualización UI: `GuideGraphTrail.jsx`
+> **Raíces de enrutamiento:** [`decision_roots.md`](decision_roots.md)  
+> Resumen F0–F5: `decision_graph.md` · Motor: `guide_engine.py` · Visualización UI: `GuideGraphTrail.jsx`
 
 ---
 
@@ -9,9 +9,10 @@
 
 ```mermaid
 flowchart TB
-    subgraph CAPA0["Capa 0 — Seguridad y rol"]
-        L0A[gate_legal]
-        L0B[role_detect]
+    subgraph CAPA0["Capa 0 — Seguridad, rol y sesión"]
+        L0A[gate_legal — instinct.md]
+        L0B[role_detect — chat / plan / audit]
+        L0D[session_lock — is_audit_session_active]
         L0C[profile_collect]
     end
     subgraph CAPA1["Capa 1 — Coaching"]
@@ -28,15 +29,15 @@ flowchart TB
         L3B[pdf_generate]
         L3C[mef_score]
     end
-    L0A --> L0B --> L0C --> L1A --> L1B --> L1C --> L2A --> L2B --> L3A --> L3B --> L3C
+    L0A --> L0B --> L0D --> L0C --> L1A --> L1B --> L1C --> L2A --> L2B --> L3A --> L3B --> L3C
 ```
 
 | Capa | Nodos | Función |
 |------|-------|---------|
-| 0 | legal, rol, perfil | Elegibilidad y contexto humano |
-| 1 | F0-F2 | Recopilación sin sobreproducción |
-| 2 | F3-F4 | Riesgo fatalista + ruta de mejora |
-| 3 | F5-PDF-score | Consolidación y métricas |
+| 0 | legal, rol, sesión, perfil | Elegibilidad, modo, persistencia de mentoría, contexto humano |
+| 1 | F0–F2 | Recopilación sin sobreproducción |
+| 2 | F3–F4 | Riesgo fatalista + ruta de mejora |
+| 3 | F5–PDF–score | Consolidación y métricas |
 
 ---
 
@@ -44,14 +45,18 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    START([Entrada]) --> LEGAL{¿Legal?}
-    LEGAL -->|No| REJ[Rechazo + redirección CEDIT]
-    LEGAL -->|Sí| ROLE{¿Expediente propio?}
-    ROLE -->|No| NORM[Consulta normativa]
-    ROLE -->|Sí| PROF[Perfil usuario 7 campos]
+    START([Entrada]) --> INST{instinct.md}
+    INST -->|REJECT| REJ[Rechazo + redirección CEDIT]
+    INST -->|OK| LEGAL{gate_legal}
+    LEGAL -->|No| REJ
+    LEGAL -->|Sí| ROLE{role_detect}
+    ROLE -->|chat| NORM[Consulta normativa — sin cupo]
+    ROLE -->|plan / audit| SESS{session_lock}
+    SESS --> PROF[Perfil usuario 7 campos]
     PROF --> F0[F0 DESCUBRIR]
+    START -->|7/7 datos msg 1| F3[F3 EVALUAR_RIESGO]
     F0 --> F1[F1 DIAGNOSTICAR]
-    F1 --> F2[F2 RECOPILAR]
+    F1 -->|+ ubicación| F2[F2 RECOPILAR]
     F2 --> SUB2{Sub-nodos datos}
     SUB2 --> D1[data_presupuesto]
     SUB2 --> D2[data_cronograma]
@@ -71,6 +76,7 @@ flowchart TB
     FATAL -->|BAJO| F4[F4 ORIENTAR]
     ALERTA --> F4
     WARN --> F4
+    F3 -->|riesgo narrado| F4
     F4 --> CMP{≥70% completitud?}
     CMP -->|No| F2
     CMP -->|Sí| F5[F5 CONSOLIDAR]
@@ -109,24 +115,26 @@ flowchart LR
 
 ---
 
-## 4. Nodo F2 — Subgrafo de datos críticos
+## 4. Nodo F2 — Subgrafo de datos críticos (paralelo)
 
-Cada sub-nodo `data_*` es una **arista reflexiva** en F2 hasta completar:
+Cada sub-nodo `data_*` es un **hueco independiente**. El motor marca **uno** como `active` (primer dato faltante no evadido dos veces):
 
 ```mermaid
-stateDiagram-v2
-    [*] --> presupuesto
-    presupuesto --> cronograma: OK
-    cronograma --> ubicacion: OK
-    ubicacion --> entidad: OK
-    entidad --> beneficiarios: OK
-    beneficiarios --> objetivos: OK
-    objetivos --> snip: OK
-    snip --> [*]: 5+ OK → F3
-    presupuesto --> presupuesto: incompleto
+flowchart TB
+    F2[F2 RECOPILAR] --> POOL{Sub-nodos paralelos}
+    POOL --> D1[data_presupuesto]
+    POOL --> D2[data_cronograma]
+    POOL --> D3[data_ubicacion]
+    POOL --> D4[data_entidad]
+    POOL --> D5[data_beneficiarios]
+    POOL --> D6[data_objetivos]
+    POOL --> D7[data_snip_cui]
+    D1 & D2 & D3 & D4 & D5 & D6 & D7 --> GATE2{≥5/7?}
+    GATE2 -->|No| F2
+    GATE2 -->|Sí| F3[F3 EVALUAR_RIESGO]
 ```
 
-**Regla de oro:** el LLM pregunta solo el sub-nodo marcado `active` en `guide_graph.nodes_active`.
+**Regla de oro:** el LLM pregunta solo el sub-nodo marcado `active` en `guide_graph.nodes_active`. Máximo **2 preguntas** por turno. Si el usuario evade un dato **2 veces**, el foco pasa al siguiente hueco (`evaded_topics` en estado).
 
 ---
 
@@ -204,6 +212,12 @@ Cada respuesta de auditoría incluye `guide_graph`:
 {
   "current_node_id": "f2_recopilar",
   "phase_name": "RECOPILAR",
+  "role_mode": "plan",
+  "session_locked": false,
+  "legal_gate": "passed",
+  "expert_fast_path": false,
+  "focus_data_id": "presupuesto",
+  "evaded_topics": [],
   "nodes": [{ "id": "f0_descubrir", "status": "completed", "label": "Descubrir", "icon": "explore" }],
   "critical_items": [{ "id": "presupuesto", "collected": false }],
   "profile": { "completeness_pct": 42, "items": [] },
@@ -222,28 +236,49 @@ Cada respuesta de auditoría incluye `guide_graph`:
 
 ## 10. Matriz de transición (tabla completa)
 
+Ver también [`decision_roots.md`](decision_roots.md) §3–§4.
+
 | Desde | Condición | Hacia |
 |-------|-----------|-------|
-| START | texto ≤30 palabras | F0 |
+| START | instinct / ilícito / código | REJ |
+| START | `detect_input_mode` = chat | NORM |
+| START | `is_audit_session_active` | Grafo (session_lock) |
+| START | texto ≤30 palabras, sin PDF | F0 |
 | START | PDF adjunto | F1 o F2 según extracción |
+| START | 7/7 datos, sin turno previo asistente | F3 (fast path) |
 | F0 | problema + actor | F1 |
-| F1 | + ubicación | F2 |
-| F2 | dato i incompleto | F2 (sub-nodo data_i) |
+| F1 | + ubicación aproximada | F2 |
+| F2 | dato i incompleto, no evadido 2× | F2 (`data_i` active) |
+| F2 | dato i evadido 2× | F2 (`data_j` siguiente) |
 | F2 | ≥5/7 datos | F3 |
-| F3 | siempre | evaluación riesgo |
-| F3 | riesgo CRÍTICO | alerta → F4 |
+| F3 | sin bloque riesgo en historial asistente | F3 |
+| F3 | riesgo narrado | F4 |
 | F4 | completitud <70% | F2 |
-| F4 | completitud ≥70% | F5 |
-| F5 | usuario confirma | PDF |
+| F4 | completitud ≥70%, orientación en historial | F5 |
+| F5 | usuario confirma / pdf_ready | PDF |
 | PDF | score <80% | F4 |
 | PDF | score ≥80% | Mis expedientes |
+
+### 10.1 Turnos posteriores (señales del usuario)
+
+| Señal | Hacia | Notas |
+|-------|-------|-------|
+| Responde dato pedido | Fase actual / siguiente `data_*` | Validar + 1 pregunta |
+| "Generar PDF ya" en F0–F2 | Anti-ciclo | Explicar umbral mínimo |
+| Cambio a normativa en sesión activa | Mantener grafo | `session_lock` |
+| PDF mid-chat | F1 o F2 | Extraer sin reiniciar F0 |
+| Corrección monto/plazo | F2 o re-F3 | Re-evaluar riesgo si aplica |
+| Refinamiento plan | F4 | Re-score |
 
 ---
 
 ## 11. Casos especiales (multi-rama)
 
 ### 11.1 Usuario experto — entrada densa
-Saltar F0 si: 7/7 datos explícitos en un mensaje → F3 directo (nunca saltar riesgo).
+Saltar F0–F1 si: **7/7 datos explícitos** en un mensaje sin respuesta previa del asistente → **F3 directo** (nunca saltar riesgo). Implementado en `assess_guide_state(..., expert_fast_path)`.
+
+### 11.1b Sesión mentoría persistente
+Si `is_audit_session_active(session_mode, history)` es verdadero, **todos los mensajes** siguientes activan el grafo y consumen cupo aunque el texto no mencione expediente. Reflejado en `guide_graph.session_locked` y nodo `session_lock`.
 
 ### 11.2 Urgencia CRÍTICA (perfil)
 Priorizar checklist mínimo viable; advertir calidad insuficiente si aplica.
@@ -263,8 +298,9 @@ Re-score → si bajó índice, F4 con brechas del PDF generado.
 
 | Archivo | Rol en el grafo |
 |---------|-----------------|
-| `master.md` | Gates legales L0A |
-| `instinct.md` | Rama REJ |
+| `decision_roots.md` | Árbol L0 + matriz primer contacto y turnos 2+ |
+| `master.md` | Gates legales L0A + identidad primer turno |
+| `instinct.md` | Rama REJ (pre-gate) |
 | `soul_extended.md` | Conducta por fase |
 | `plan.md` | Orquestación omnicanal |
 | `guide_engine.py` | Estado machine ejecutable |
@@ -336,4 +372,4 @@ Cuando `isAuditSession` es verdadero, cada respuesta del bot con `guide_graph` c
 
 ---
 
-**Versión:** 3.0 SUPREME + PROGRAMS · **Nodos totales:** 12 principales + 7 datos + 7 perfil + 5 sectores + 10 programas
+**Versión:** 4.0 — Raíces unificadas + motor v4 · **Nodos totales:** 13 principales + 7 datos + 7 perfil + 5 sectores + 10 programas
