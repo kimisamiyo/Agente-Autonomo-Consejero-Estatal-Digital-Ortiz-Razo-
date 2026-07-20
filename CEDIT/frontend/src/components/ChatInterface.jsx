@@ -7,7 +7,6 @@ import MentorInsightPanel from './MentorInsightPanel';
 import GuideGraphTrail from './GuideGraphTrail';
 import AuditDecisionNetwork from './AuditDecisionNetwork';
 import WelcomeConstellation from './WelcomeConstellation';
-import ExpedientePulse from './ExpedientePulse';
 import MentorBriefingModal from './MentorBriefingModal';
 import HitoToast from './HitoToast';
 import { canShowPdfOffer, isEarlyGuidePhase } from '../utils/pdfEligibility';
@@ -47,13 +46,6 @@ function BotMessageHeader({ mode, subtitle, modeBadge }) {
   );
 }
 
-function getFollowUpSection(content, fullContent) {
-  const text = fullContent || content || '';
-  if (!text.toLowerCase().includes('para alimentar')) return null;
-  const part = text.split(/## Para alimentar/i)[1];
-  return part ? `## Para alimentar${part}` : null;
-}
-
 const ChatInterface = ({
   messages,
   isLoading,
@@ -80,10 +72,8 @@ const ChatInterface = ({
   activeCheckpointId = null,
   onRestoreCheckpoint,
   onNodePositionChange,
-  onOpenCmdk,
   briefingOpen = false,
   onBriefingClose,
-  onBriefingAvailability,
 }) => {
   const { t } = useI18n();
 
@@ -113,10 +103,9 @@ const ChatInterface = ({
   const [generatingPdf, setGeneratingPdf] = useState(null);
   const [pdfGenPhase, setPdfGenPhase] = useState(null);
   const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
-  /** Ambos paneles pueden estar abiertos a la vez; mobileTab solo controla cuál se ve en pantallas chicas */
+  /** Ambos paneles pueden estar abiertos a la vez */
   const [networkExpanded, setNetworkExpanded] = useState(false);
   const [mentorExpanded, setMentorExpanded] = useState(false);
-  const [mobileTab, setMobileTab] = useState('mentor');
   const [hito, setHito] = useState(null);
   const [localBriefing, setLocalBriefing] = useState(false);
   const hitoSeenRef = useRef({ phase: '', threshold: false });
@@ -126,10 +115,6 @@ const ChatInterface = ({
 
   const messageCount = usage.count ?? 0;
   const freeLimit = usage.limit ?? 10;
-  const isPremiumSession =
-    sessionMode === 'audit' ||
-    sessionMode === 'plan' ||
-    messages.some((m) => m.consumesAuditCredit || m.isAudit || m.showPdf);
 
   const showDecisionNetwork =
     isAuditSession(sessionMode, messages) && decisionCheckpoints.length > 0;
@@ -171,11 +156,7 @@ const ChatInterface = ({
       if (m.isDocAck) continue;
       if (!m.isAudit && m.mode !== 'audit' && m.mode !== 'plan') continue;
       if (m.opinion || m.guideGraph) {
-        const panelMarkdown = buildMentorPanelMarkdown(
-          m.opinion,
-          m.fullContent,
-          m.content
-        );
+        const panelMarkdown = buildMentorPanelMarkdown(m.opinion);
         const { chat: chatOpinion } = splitOpinionContent(m.opinion || '');
         return { index: i, msg: m, chatOpinion, panelMarkdown };
       }
@@ -191,19 +172,11 @@ const ChatInterface = ({
   const mefScore = latestMentorInsight?.msg?.mefScore || null;
   const pulsePct =
     guideGraph?.completeness_pct ?? mefScore?.document_only_index ?? mefScore?.index ?? 0;
-  const pulsePhase = guideGraph?.phase_name || latestMentorInsight?.msg?.guidePhase || '';
-  const pulseLine = guideGraph?.mentor_message || '';
-  const showPulse = Boolean(guideGraph || (typeof pulsePct === 'number' && pulsePct > 0));
   const briefingIsOpen = briefingOpen || localBriefing;
-
-  useEffect(() => {
-    onBriefingAvailability?.(showPulse || showMentorHeader);
-  }, [showPulse, showMentorHeader, onBriefingAvailability]);
 
   useEffect(() => {
     setNetworkExpanded(false);
     setMentorExpanded(false);
-    setMobileTab('mentor');
   }, [latestMentorInsight?.index]);
 
   useEffect(() => {
@@ -220,8 +193,6 @@ const ChatInterface = ({
       setHito({ type: 'threshold', pct: Math.round(pct) });
     }
   }, [guideGraph, mefScore, pulsePct]);
-
-  const openBriefing = () => setLocalBriefing(true);
 
   const closeBriefing = () => {
     setLocalBriefing(false);
@@ -497,71 +468,15 @@ const ChatInterface = ({
         </div>
       )}
 
-      {!isPremium && isPremiumSession && (
-        <div className="shrink-0 w-full bg-white/90 backdrop-blur border-b border-border-gray px-4 py-2 flex justify-center z-10">
-          <div className="w-full max-w-[850px] flex items-center gap-3">
-            <span className="text-xs text-slate-500 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">bolt</span>
-              {t('chat.auditsBar', { count: messageCount, limit: freeLimit })}
-            </span>
-            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-700 ${
-                  freemiumExceeded ? 'cedit-accent-steel' : messageCount >= freeLimit - 2 ? 'bg-slate-500' : 'cedit-accent-steel'
-                }`}
-                style={{ width: `${Math.min((messageCount / freeLimit) * 100, 100)}%` }}
-              />
-            </div>
-            {freemiumExceeded ? (
-              <button
-                type="button"
-                onClick={onRequestResetMemory}
-                className="text-[11px] font-bold text-white cedit-accent-steel px-3 py-1 rounded-full hover:opacity-95"
-              >
-                {t('chat.resetMemory')}
-              </button>
-            ) : (
-              <button type="button" onClick={onOpenPremium} className="text-[10px] text-slate-500 hover:text-[var(--cedit-steel)]">
-                {t('chat.premium')}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       {showPlanHeader && (
         <div className="shrink-0 w-full px-3 sm:px-5 py-2.5 border-b border-slate-200 dark:border-slate-700/80 bg-white dark:bg-[var(--cedit-surface)] z-10">
-          {showDecisionNetwork && showMentorHeader && (
-            <div className="cedit-seg lg:hidden max-w-[min(1440px,100%)] mx-auto mb-2">
-              <button
-                type="button"
-                className={mobileTab === 'mentor' ? 'is-on' : ''}
-                onClick={() => setMobileTab('mentor')}
-              >
-                {t('jewel.tabs.mentor')}
-              </button>
-              <button
-                type="button"
-                className={mobileTab === 'network' ? 'is-on' : ''}
-                onClick={() => setMobileTab('network')}
-              >
-                {t('jewel.tabs.network')}
-              </button>
-            </div>
-          )}
           <div
             className={`w-full max-w-[min(1440px,100%)] mx-auto flex gap-3 items-start min-h-[56px] ${
               showDecisionNetwork && showMentorHeader ? 'flex-col lg:flex-row' : 'flex-col'
             }`}
           >
             {showDecisionNetwork && (
-              <div
-                className={`${showMentorHeader ? 'lg:flex-1 min-w-0 w-full' : 'w-full'} ${
-                  showDecisionNetwork && showMentorHeader && mobileTab === 'mentor'
-                    ? 'hidden lg:block'
-                    : ''
-                }`}
-              >
+              <div className={showMentorHeader ? 'lg:flex-1 min-w-0 w-full' : 'w-full'}>
                 <AuditDecisionNetwork
                   checkpoints={decisionCheckpoints}
                   positions={nodePositions}
@@ -576,11 +491,7 @@ const ChatInterface = ({
             {showMentorHeader && (
               <div
                 ref={mentorPanelRef}
-                className={`${showDecisionNetwork ? 'lg:flex-1 min-w-0 w-full' : 'w-full'} ${
-                  showDecisionNetwork && showMentorHeader && mobileTab === 'network'
-                    ? 'hidden lg:block'
-                    : ''
-                }`}
+                className={showDecisionNetwork ? 'lg:flex-1 min-w-0 w-full' : 'w-full'}
               >
                 <MentorInsightPanel
                   messageKey={latestMentorInsight.index}
@@ -597,21 +508,12 @@ const ChatInterface = ({
         </div>
       )}
 
-      <ExpedientePulse
-        visible={showPulse}
-        phase={pulsePhase}
-        pct={pulsePct}
-        mentorLine={typeof pulseLine === 'string' ? pulseLine.slice(0, 140) : ''}
-        onOpenBriefing={openBriefing}
-      />
-
       <div className="flex-1 overflow-y-auto w-full px-4 md:px-gutter py-6 flex justify-center">
-        <div className="w-full max-w-[850px] flex flex-col gap-6">
+        <div className="w-full max-w-[850px] flex flex-col gap-4">
           {messages.length === 0 ? (
             <WelcomeConstellation
               onSendMessage={onSendMessage}
               onPickPdf={() => fileInputRef.current?.click()}
-              onOpenCmdk={onOpenCmdk}
             />
           ) : (
             messages.map((msg, index) => {
@@ -629,7 +531,7 @@ const ChatInterface = ({
                 style={{ animationDelay: `${Math.min(index * 40, 200)}ms` }}
               >
                 {msg.role === 'user' ? (
-                  <div className="bg-white border border-border-gray p-5 rounded-2xl rounded-tr-md max-w-[85%] shadow-sm">
+                  <div className="bg-white border border-border-gray p-3 rounded-2xl rounded-tr-md max-w-[85%] shadow-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="material-symbols-outlined text-slate-400 text-sm">person</span>
                       <span className="text-xs text-slate-500">{t('chat.you')}</span>
@@ -647,7 +549,7 @@ const ChatInterface = ({
                     />
 
                     <div
-                      className={`p-6 sm:p-8 rounded-2xl rounded-tl-md transition-shadow duration-300 ${
+                      className={`p-3 sm:p-4 rounded-2xl rounded-tl-md transition-shadow duration-300 ${
                         msg.isAudit || msg.isDocAck
                           ? 'bg-white border border-slate-200 shadow-sm'
                           : msg.mode === 'freemium'
@@ -678,7 +580,6 @@ const ChatInterface = ({
                                 type="button"
                                 onClick={() => {
                                   setMentorExpanded(true);
-                                  setMobileTab('mentor');
                                   mentorPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                                 }}
                                 className="ml-auto text-[10px] font-semibold text-slate-600 hover:text-slate-900 underline"
@@ -749,20 +650,6 @@ const ChatInterface = ({
                             </ReactMarkdown>
                           </div>
                         </details>
-                      )}
-
-                      {getFollowUpSection(msg.content, msg.fullContent) && !isLatestMentorInsight && (
-                        <div className={`mt-4 p-4 ${ceditCardClass('gray')} cedit-fade-in`}>
-                          <div className="flex items-center gap-2 mb-2">
-                            <div className={ceditIconBoxClass('steel', 'w-8 h-8')}>
-                              <span className="material-symbols-outlined text-white text-base">edit_note</span>
-                            </div>
-                            <p className={ceditLabelClass('steel')}>{t('chat.pdfData')}</p>
-                          </div>
-                          <div className="cedit-readable prose prose-sm max-w-none text-slate-800 dark:text-slate-100">
-                            <ReactMarkdown>{getFollowUpSection(msg.content, msg.fullContent)}</ReactMarkdown>
-                          </div>
-                        </div>
                       )}
 
                       {msg.isFreemiumBlock && (
@@ -839,8 +726,14 @@ const ChatInterface = ({
                           {t('decision.restoreShort')}
                         </button>
                       )}
-                      <button type="button" className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 ml-auto" onClick={() => navigator.clipboard.writeText(msg.fullContent || msg.content)}>
-                        <span className="material-symbols-outlined text-[16px]">content_copy</span> {t('chat.copy')}
+                      <button
+                        type="button"
+                        className="text-slate-500 hover:text-slate-800 flex items-center ml-auto p-1 rounded-md hover:bg-slate-100 transition-colors"
+                        title={t('chat.copy')}
+                        aria-label={t('chat.copy')}
+                        onClick={() => navigator.clipboard.writeText(msg.fullContent || msg.content)}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">content_copy</span>
                       </button>
                     </div>
                   </div>
@@ -856,7 +749,7 @@ const ChatInterface = ({
                 mode={sessionMode === 'audit' ? 'audit' : sessionMode === 'plan' ? 'plan' : 'chat'}
                 modeBadge={modeBadge}
               />
-              <div className="bg-[var(--cedit-surface)] border border-[var(--cedit-border)] p-6 rounded-2xl rounded-tl-md shadow-sm flex items-center gap-4">
+              <div className="bg-[var(--cedit-surface)] border border-[var(--cedit-border)] p-3 sm:p-4 rounded-2xl rounded-tl-md shadow-sm flex items-center gap-3">
                 <div className="flex gap-1.5">
                   {[0, 150, 300].map((d) => (
                     <div
@@ -953,9 +846,6 @@ const ChatInterface = ({
                   (freemiumExceeded && !isPremium && !refineTarget)
                 }
               >
-                <span className="material-symbols-outlined text-base">
-                  {isLoading ? 'hourglass_top' : refineTarget ? 'build' : 'auto_awesome'}
-                </span>
                 {refineTarget ? t('chat.applyFix') : t('chat.analyze')}
               </button>
             </div>
@@ -972,7 +862,6 @@ const ChatInterface = ({
         mefScore={mefScore}
         onFocusMentor={() => {
           setMentorExpanded(true);
-          setMobileTab('mentor');
           mentorPanelRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
         }}
       />

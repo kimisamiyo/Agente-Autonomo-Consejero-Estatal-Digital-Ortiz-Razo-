@@ -1,6 +1,5 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { useI18n } from '../i18n/I18nContext';
-import NetworksLinks from './NetworksLinks';
 import { ceditBtnPrimaryClass } from '../theme/ceditPalette';
 
 const Sidebar = ({
@@ -13,21 +12,11 @@ const Sidebar = ({
   onNavigateView,
   activeView = 'chat',
   onResetMemory,
-  sessionMode = 'chat',
   usage = {},
   canCreateNewChat = true,
   isPremium = false,
 }) => {
   const { t } = useI18n();
-
-  const modeBadge = useMemo(() => {
-    const map = {
-      audit: { text: t('badge.auditActive'), tone: 'audit' },
-      plan: { text: t('badge.planMef'), tone: 'plan' },
-      freemium: { text: t('badge.limitReached'), tone: 'limit' },
-    };
-    return map[sessionMode];
-  }, [sessionMode, t]);
 
   const sharedLabel = !isPremium ? t('nav.shared') : '';
 
@@ -88,19 +77,8 @@ const Sidebar = ({
                 CEDIT
               </h1>
               <p className="cedit-side-muted text-[10px] uppercase tracking-[0.14em] font-semibold mt-1.5">
-                {t('app.digitalGov')}
+                {t('app.subtitle')}
               </p>
-              {modeBadge && (
-                <span
-                  className={`inline-block mt-2 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                    modeBadge.tone === 'audit'
-                      ? 'bg-[var(--cedit-steel-soft)] text-[var(--cedit-text)] border-[color-mix(in_srgb,var(--cedit-steel)_35%,var(--cedit-border))]'
-                      : 'bg-white/5 text-[var(--cedit-text)] border-[var(--cedit-border)]'
-                  }`}
-                >
-                  {modeBadge.text}
-                </span>
-              )}
             </div>
           </div>
 
@@ -204,24 +182,20 @@ const Sidebar = ({
             <p className={sectionLabel}>{t('nav.system')}</p>
           </div>
           <NavBtn
-            view="settings"
-            icon="settings"
-            label={t('nav.settings')}
-            active={activeView === 'settings'}
-            onClick={() => onNavigateView?.('settings')}
-          />
-          <NavBtn
             view="support"
             icon="help_center"
             label={t('nav.support')}
             active={activeView === 'support'}
             onClick={() => onNavigateView?.('support')}
           />
+          <NavBtn
+            view="settings"
+            icon="settings"
+            label={t('nav.settings')}
+            active={activeView === 'settings'}
+            onClick={() => onNavigateView?.('settings')}
+          />
         </nav>
-
-        <div className="mt-auto border-t border-[var(--cedit-border)] pt-4">
-          <NetworksLinks layout="sidebar" />
-        </div>
       </aside>
     </>
   );

@@ -137,7 +137,6 @@ function App() {
   const [keysOpen, setKeysOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [briefingOpen, setBriefingOpen] = useState(false);
-  const [canBriefing, setCanBriefing] = useState(false);
   const [usage, setUsage] = useState({ count: 0, limit: FREE_LIMIT, remaining: FREE_LIMIT });
   const [premiumOpen, setPremiumOpen] = useState(false);
   const [gateModal, setGateModal] = useState({ open: false, mode: 'limit' });
@@ -812,7 +811,6 @@ function App() {
             requestNewChat();
           }}
           onResetMemory={() => setGateModal({ open: true, mode: 'reset' })}
-          sessionMode={sessionMode}
           usage={usage}
           canCreateNewChat={canCreateNewChat}
           isPremium={proActive}
@@ -845,7 +843,7 @@ function App() {
           />
         )}
         {activeView === 'support' && (
-          <SupportView onGoChat={() => setActiveView('chat')} />
+          <SupportView />
         )}
         {activeView === 'chat' && (
           <ChatInterface
@@ -917,18 +915,14 @@ function App() {
             activeCheckpointId={activeCheckpointId}
             onRestoreCheckpoint={restoreToCheckpoint}
             onNodePositionChange={handleNodePositionChange}
-            onOpenCmdk={() => setCmdkOpen(true)}
             briefingOpen={briefingOpen}
             onBriefingClose={() => setBriefingOpen(false)}
-            onBriefingAvailability={setCanBriefing}
           />
         )}
       </ErrorBoundary>
       <JewelFab
         hidden={cmdkOpen || keysOpen || toolsOpen || briefingOpen || premiumOpen || gateModal.open}
-        onOpenCmdk={() => setCmdkOpen(true)}
-        onOpenTools={openToolsFromJewel}
-        onOpenKeys={() => setKeysOpen(true)}
+        onOpenBriefing={openBriefingFromJewel}
       />
       <CommandPalette
         open={cmdkOpen}
@@ -947,7 +941,6 @@ function App() {
           setKeysOpen(true);
         }}
         onOpenBriefing={openBriefingFromJewel}
-        canBriefing={canBriefing}
       />
       <ShortcutsGuide
         open={keysOpen}

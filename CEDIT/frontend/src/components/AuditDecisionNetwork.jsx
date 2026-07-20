@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useI18n } from '../i18n/I18nContext';
 import {
   buildNetworkEdges,
-  defaultNodePosition,
+  layoutTimeline,
 } from '../utils/auditDecisionPoints';
 
-const NODE_W = 88;
-const NODE_H = 56;
+const NODE_W = 112;
+const NODE_H = 58;
 
 /** Fases en escala acero / grafito (CEDIT). */
 const phaseColors = {
@@ -68,17 +68,27 @@ const AuditDecisionNetwork = ({
   }, [expanded]);
 
   const resolvedPositions = useMemo(() => {
-    const out = { ...positions };
-    sorted.forEach((cp, i) => {
-      if (!out[cp.id]) {
-        out[cp.id] = cp.position || defaultNodePosition(i, sorted.length, size.w, size.h);
+    const { positions: laid } = layoutTimeline(sorted, size.w, size.h);
+    const out = { ...laid };
+    sorted.forEach((cp) => {
+      const custom = positions[cp.id];
+      if (!custom) return;
+      // Camino activo: mismo eje Y (horizontal). Solo se respeta el X arrastrado.
+      if (!cp.abandoned && laid[cp.id]) {
+        out[cp.id] = {
+          x: custom.x,
+          y: laid[cp.id].y,
+          lane: 0,
+        };
+      } else {
+        out[cp.id] = custom;
       }
     });
     return out;
   }, [sorted, positions, size.w, size.h]);
 
   const edges = useMemo(
-    () => buildNetworkEdges(sorted, resolvedPositions),
+    () => buildNetworkEdges(sorted, resolvedPositions, NODE_W, NODE_H),
     [sorted, resolvedPositions]
   );
 
@@ -148,7 +158,7 @@ const AuditDecisionNetwork = ({
         <>
           <div
             ref={containerRef}
-            className="relative w-full h-[min(260px,34vh)] min-h-[210px] max-h-[340px] select-none touch-none"
+            className="relative w-full h-[min(200px,28vh)] min-h-[160px] max-h-[260px] select-none touch-none overflow-x-auto"
             style={{
               backgroundImage:
                 'radial-gradient(ellipse at 15% 20%, rgba(91,107,127,0.1) 0%, transparent 50%), radial-gradient(ellipse at 85% 75%, rgba(100,116,139,0.1) 0%, transparent 45%), linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)',
@@ -176,10 +186,15 @@ const AuditDecisionNetwork = ({
                 </linearGradient>
               </defs>
               {edges.map((edge) => {
+                const sameRow = Math.abs(edge.y1 - edge.y2) < 6;
                 const mx = (edge.x1 + edge.x2) / 2;
-                const my = (edge.y1 + edge.y2) / 2 - 30;
-                const d = `M ${edge.x1} ${edge.y1} Q ${mx} ${my} ${edge.x2} ${edge.y2}`;
-                const isLat = edge.kind === 'lateral';
+                const my = sameRow
+                  ? (edge.y1 + edge.y2) / 2
+                  : (edge.y1 + edge.y2) / 2 - 24;
+                const d = sameRow
+                  ? `M ${edge.x1} ${edge.y1} L ${edge.x2} ${edge.y2}`
+                  : `M ${edge.x1} ${edge.y1} Q ${mx} ${my} ${edge.x2} ${edge.y2}`;
+                const isLat = edge.kind === 'lateral' || edge.kind === 'branch' || edge.kind === 'fork';
                 const isActive =
                   activeCheckpointId &&
                   (edge.from === activeCheckpointId || edge.to === activeCheckpointId);

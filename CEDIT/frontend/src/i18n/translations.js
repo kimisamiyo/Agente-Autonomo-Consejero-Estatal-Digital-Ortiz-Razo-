@@ -133,7 +133,7 @@ export const translations = {
     'jewel.fab.keys': 'Atajos',
     'jewel.tabs.mentor': 'Mentor',
     'jewel.tabs.network': 'Red',
-    'jewel.composer.quota': 'Cupo {{count}}/{{limit}}',
+    'jewel.composer.quota': 'Auditoría {{count}}/{{limit}}',
     'locale.es': 'Español',
     'locale.qu': 'Quechua',
     'locale.ay': 'Aymara',

@@ -116,55 +116,16 @@ const GuideGraphTrail = ({ graph, className = '' }) => {
           </div>
         </div>
 
-        {/* Dual progress */}
-        <div className="grid grid-cols-2 gap-2.5 mt-1">
-          <div className="rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm">
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">
-                {t('guide.expediente')}
-              </p>
-              <span className="text-[10px] font-bold tabular-nums text-[var(--cedit-text)]">
-                {graph.completeness_pct ?? 0}%
-              </span>
-            </div>
-            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-slate-500 to-slate-800 transition-all duration-700 ease-out"
-                style={{ width: `${graph.completeness_pct ?? 0}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1.5">
-              {collectedCritical}/{criticalItems.length || 7} {t('guide.criticalData').toLowerCase()}
-            </p>
-          </div>
-          <div className="rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm">
-            <div className="flex items-center justify-between gap-1 mb-1.5">
-              <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">
-                {t('guide.profile')}
-              </p>
-              <span className="text-[10px] font-bold tabular-nums text-slate-800">
-                {graph.profile_completeness_pct ?? 0}%
-              </span>
-            </div>
-            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-slate-500 to-slate-700 transition-all duration-700 ease-out"
-                style={{ width: `${graph.profile_completeness_pct ?? 0}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1.5">
-              {collectedProfile}/{profileItems.length || 7} {t('guide.userProfile').toLowerCase()}
-            </p>
-          </div>
-        </div>
-
         {criticalItems.length > 0 && (
           <details className="mt-3.5 group" open={graph.phase_name === 'RECOPILAR'}>
-            <summary className="cursor-pointer text-[10px] font-bold text-slate-600 uppercase tracking-wide list-none flex items-center gap-1 hover:text-[var(--cedit-text)]">
-              <span className="material-symbols-outlined text-sm group-open:rotate-90 transition-transform text-[var(--cedit-steel)]">
+            <summary className="cursor-pointer text-[10px] font-bold text-slate-600 uppercase tracking-wide list-none flex items-center gap-2 hover:text-[var(--cedit-text)]">
+              <span className="material-symbols-outlined text-sm group-open:rotate-90 transition-transform text-[var(--cedit-steel)] shrink-0">
                 chevron_right
               </span>
-              {t('guide.criticalData')}
+              <span className="min-w-0 flex-1 truncate">{t('guide.criticalData')}</span>
+              <span className="shrink-0 text-[9px] normal-case tracking-normal font-semibold tabular-nums text-[var(--cedit-text)]">
+                {collectedCritical}/{criticalItems.length || 7}
+              </span>
             </summary>
             <div className="flex flex-wrap gap-1.5 mt-2.5">
               {criticalItems.map((item) => (
@@ -189,11 +150,14 @@ const GuideGraphTrail = ({ graph, className = '' }) => {
 
         {profileItems.length > 0 && (
           <details className="mt-2.5 group">
-            <summary className="cursor-pointer text-[10px] font-bold text-slate-600 uppercase tracking-wide list-none flex items-center gap-1 hover:text-[var(--cedit-text)]">
-              <span className="material-symbols-outlined text-sm group-open:rotate-90 transition-transform text-slate-600">
+            <summary className="cursor-pointer text-[10px] font-bold text-slate-600 uppercase tracking-wide list-none flex items-center gap-2 hover:text-[var(--cedit-text)]">
+              <span className="material-symbols-outlined text-sm group-open:rotate-90 transition-transform text-slate-600 shrink-0">
                 chevron_right
               </span>
-              {t('guide.userProfile')}
+              <span className="min-w-0 flex-1 truncate">{t('guide.userProfile')}</span>
+              <span className="shrink-0 text-[9px] normal-case tracking-normal font-semibold tabular-nums text-slate-800">
+                {collectedProfile}/{profileItems.length || 7}
+              </span>
             </summary>
             <div className="flex flex-wrap gap-1.5 mt-2.5">
               {profileItems.map((item) => (

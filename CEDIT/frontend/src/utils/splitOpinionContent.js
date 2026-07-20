@@ -1,9 +1,9 @@
 /** Secciones estructuradas que van al panel del header, no al chat. */
 const PANEL_HEADING =
-  /^##\s*(avance del expediente|lo que ya sabemos|para alimentar|datos críticos)/i;
+  /^##\s*(avance del expediente|lo que ya sabemos|datos críticos)/i;
 
 /**
- * Separa la opinión del mentor: parte conversacional (chat) vs checklist/PDF (panel).
+ * Separa la opinión del mentor: parte conversacional (chat) vs checklist (panel).
  * @returns {{ chat: string, panel: string }}
  */
 export function splitOpinionContent(opinion = '') {
@@ -20,24 +20,24 @@ export function splitOpinionContent(opinion = '') {
   }
 
   if (splitAt >= lines.length) {
-    return { chat: text, panel: '' };
+    return { chat: stripParaAlimentar(text), panel: '' };
   }
 
-  const chat = lines.slice(0, splitAt).join('\n').trim();
-  const panel = lines.slice(splitAt).join('\n').trim();
-  return { chat: chat || text, panel };
+  const chat = stripParaAlimentar(lines.slice(0, splitAt).join('\n').trim());
+  const panel = stripParaAlimentar(lines.slice(splitAt).join('\n').trim());
+  return { chat: chat || stripParaAlimentar(text), panel };
 }
 
-/** Une bloques del panel (opinión estructurada + sección PDF del contenido completo). */
-export function buildMentorPanelMarkdown(opinion = '', fullContent = '', content = '') {
+/** Une bloques del panel (sin la sección "Para alimentar"). */
+export function buildMentorPanelMarkdown(opinion = '') {
   const { panel: fromOpinion } = splitOpinionContent(opinion);
-  const follow = getFollowUpFromContent(fullContent || content);
-  const parts = [fromOpinion, follow].filter(Boolean);
-  return parts.join('\n\n').trim();
+  return stripParaAlimentar(fromOpinion).trim();
 }
 
-function getFollowUpFromContent(text) {
-  if (!text || !text.toLowerCase().includes('para alimentar')) return '';
-  const part = text.split(/## Para alimentar/i)[1];
-  return part ? `## Para alimentar${part}`.trim() : '';
+function stripParaAlimentar(text = '') {
+  if (!text) return '';
+  return text
+    .replace(/^##\s*Para alimentar[\s\S]*?(?=\n##\s|$)/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

@@ -12,7 +12,6 @@ const CommandPalette = ({
   onOpenTools,
   onOpenShortcuts,
   onOpenBriefing,
-  canBriefing,
 }) => {
   const { t } = useI18n();
   const [q, setQ] = useState('');
@@ -22,26 +21,24 @@ const CommandPalette = ({
   const items = useMemo(() => {
     const all = [
       { id: 'new', icon: 'add', label: t('jewel.cmd.new'), kbd: 'N', run: onNewChat },
+      {
+        id: 'brief',
+        icon: 'auto_awesome',
+        label: t('jewel.cmd.briefing'),
+        run: onOpenBriefing,
+      },
       { id: 'chat', icon: 'forum', label: t('jewel.cmd.chat'), run: () => onNavigate('chat') },
-      { id: 'settings', icon: 'settings', label: t('jewel.cmd.settings'), run: () => onNavigate('settings') },
       { id: 'support', icon: 'support_agent', label: t('jewel.cmd.support'), run: () => onNavigate('support') },
+      { id: 'settings', icon: 'settings', label: t('jewel.cmd.settings'), run: () => onNavigate('settings') },
       { id: 'norms', icon: 'menu_book', label: t('jewel.cmd.norms'), run: () => onNavigate('normativas') },
       { id: 'files', icon: 'folder_open', label: t('jewel.cmd.files'), run: () => onNavigate('expedientes') },
       { id: 'tools', icon: 'construction', label: t('jewel.cmd.tools'), run: onOpenTools },
       { id: 'keys', icon: 'keyboard', label: t('jewel.cmd.keys'), run: onOpenShortcuts },
     ];
-    if (canBriefing) {
-      all.splice(1, 0, {
-        id: 'brief',
-        icon: 'auto_awesome',
-        label: t('jewel.cmd.briefing'),
-        run: onOpenBriefing,
-      });
-    }
     const needle = q.trim().toLowerCase();
     if (!needle) return all;
     return all.filter((i) => i.label.toLowerCase().includes(needle));
-  }, [q, t, onNavigate, onNewChat, onOpenTools, onOpenShortcuts, onOpenBriefing, canBriefing]);
+  }, [q, t, onNavigate, onNewChat, onOpenTools, onOpenShortcuts, onOpenBriefing]);
 
   useEffect(() => {
     if (!open) return undefined;

@@ -4,17 +4,10 @@ export const NORMATIVAS_ITEMS = [
     id: 'constitucion',
     icon: 'gavel',
     theme: 'gray',
-    officialUrl: 'https://www.gob.pe/13573-constitucion-politica-del-peru',
-    officialHost: 'gob.pe',
+    officialUrl:
+      'https://www.gob.pe/institucion/minjus/informes-publicaciones/7498785-vigesima-primera-edicion-oficial-de-la-constitucion-politica-del-peru-bolsillo-actualizada-al-05-de-diciembre-de-2025',
+    officialHost: 'gob.pe / MINJUS',
     i18nPrefix: 'norms.constitucion',
-  },
-  {
-    id: 'invierte',
-    icon: 'account_balance',
-    theme: 'steel',
-    officialUrl: 'https://www.invierte.pe/',
-    officialHost: 'invierte.pe',
-    i18nPrefix: 'norms.invierte',
   },
   {
     id: 'mef-marcos',

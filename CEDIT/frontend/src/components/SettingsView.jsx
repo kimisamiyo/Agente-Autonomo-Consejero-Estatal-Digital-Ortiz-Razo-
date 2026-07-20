@@ -76,22 +76,22 @@ const SettingsView = ({ settings, onSettingsChange }) => {
   const mode = local.colorMode === 'dark' ? 'dark' : 'light';
 
   return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="relative p-5 sm:p-8 md:p-10 max-w-3xl mx-auto w-full">
-        <header className="cedit-fade-in flex items-start gap-4 mb-8">
-          <div className={ceditIconBoxClass('steel', 'w-14 h-14')}>
-            <span className="material-symbols-outlined text-white text-3xl">tune</span>
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] mb-1" style={{ color: 'var(--cedit-steel)' }}>
-              CEDIT
-            </p>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight" style={{ color: 'var(--cedit-text)' }}>
-              {t('settings.title')}
-            </h1>
-            <p className="text-sm mt-1.5 leading-relaxed" style={{ color: 'var(--cedit-text-muted)' }}>
-              {t('settings.subtitle')}
-            </p>
+    <div className="flex-1 overflow-y-auto p-6 md:p-10 w-full">
+      <div className="max-w-6xl mx-auto">
+        <header className="mb-8 cedit-fade-in">
+          <div className="flex items-center gap-3 mb-3">
+            <div className={ceditIconBoxClass('steel', 'w-12 h-12')}>
+              <span
+                className="material-symbols-outlined text-white text-2xl"
+                style={{ fontVariationSettings: '"FILL" 1' }}
+              >
+                tune
+              </span>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-[var(--cedit-text)]">{t('settings.title')}</h1>
+              <p className="text-sm text-[var(--cedit-text-muted)] mt-1">{t('settings.subtitle')}</p>
+            </div>
           </div>
         </header>
 
@@ -105,7 +105,7 @@ const SettingsView = ({ settings, onSettingsChange }) => {
             <span className="flex-1 h-px" style={{ background: 'var(--cedit-border)' }} />
           </h2>
 
-          <div className="grid grid-cols-2 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {COLOR_MODES.map((m) => {
               const active = mode === m.id;
               return (
@@ -271,7 +271,7 @@ const SettingsView = ({ settings, onSettingsChange }) => {
             {t('a11y.hint')}
           </p>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {CARD_KEYS.map(({ key, labelKey, icon, theme }, i) => {
               const level = local[key] ?? 0;
               const levelName = t(`a11y.level.${LEVEL_KEYS[level]}`);
