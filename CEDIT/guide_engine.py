@@ -518,6 +518,13 @@ GRAPH_PHASES: List[Dict[str, Any]] = [
         "description": "Ciudadano vs formulador de expediente",
     },
     {
+        "id": "session_lock",
+        "phase": -1,
+        "label": "Sesión mentoría",
+        "icon": "lock",
+        "description": "Mentoría activa: todos los turnos usan el grafo",
+    },
+    {
         "id": "profile_collect",
         "phase": -1,
         "label": "Perfil del usuario",
@@ -594,6 +601,36 @@ DISCOVERY_KEYWORDS = re.compile(
     re.I,
 )
 
+RISK_HISTORY_MARKERS = (
+    "escenario pessimista",
+    "escenario adverso",
+    "peor escenario",
+    "índice de riesgo",
+    "indice de riesgo",
+    "matriz de riesgo",
+    "probabilidad de rechazo",
+    "fatalista",
+)
+
+ORIENT_HISTORY_MARKERS = (
+    "hoja de ruta",
+    "top 3",
+    "acciones correctivas",
+    "acciones priorizadas",
+    "brechas prioritarias",
+    "programas impulsadores",
+)
+
+DATA_ASK_PATTERNS: Dict[str, str] = {
+    "presupuesto": r"presupuesto|monto|financiamiento|costo\s+total|s/",
+    "cronograma": r"cronograma|plazo|mes(es)?\s+de\s+ejecuci",
+    "ubicacion": r"ubigeo|ubicaci[oó]n|distrito|provincia|departamento",
+    "entidad": r"entidad\s+ejecutora|formulador|unidad\s+formuladora",
+    "beneficiarios": r"beneficiar|indicador|poblaci[oó]n\s+meta",
+    "objetivos": r"objetivo|producto|componente",
+    "snip_cui": r"snip|cui",
+}
+
 
 class CoachingPhase(IntEnum):
     DESCUBRIR = 0
@@ -668,6 +705,12 @@ class GuideState:
     mentor_message: str
     recommended_programs: List[Dict[str, Any]] = field(default_factory=list)
     detected_sectors: List[str] = field(default_factory=list)
+    role_mode: str = "chat"
+    legal_gate: str = "passed"
+    session_locked: bool = False
+    expert_fast_path: bool = False
+    focus_data_id: Optional[str] = None
+    evaded_topics: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -689,6 +732,12 @@ class GuideState:
             "mentor_message": self.mentor_message,
             "recommended_programs": self.recommended_programs,
             "detected_sectors": self.detected_sectors,
+            "role_mode": self.role_mode,
+            "legal_gate": self.legal_gate,
+            "session_locked": self.session_locked,
+            "expert_fast_path": self.expert_fast_path,
+            "focus_data_id": self.focus_data_id,
+            "evaded_topics": self.evaded_topics,
         }
 
 
@@ -776,8 +825,157 @@ def _has_location_signal(blob: str) -> bool:
     )
 
 
-def _build_nodes_visited(phase: CoachingPhase, profile: UserProfileState, has_pdf: bool) -> List[str]:
-    visited = ["gate_legal", "role_detect"]
+def _assistant_blob(history: Optional[List[Dict]] = None) -> str:
+    parts = []
+    for h in history or []:
+        role = (h.get("role") or "").lower()
+        if role in ("assistant", "ai", "bot"):
+            parts.append(h.get("content") or "")
+    return " ".join(parts).lower()
+
+
+def _history_has_assistant_turn(history: Optional[List[Dict]] = None) -> bool:
+    for h in history or []:
+        role = (h.get("role") or "").lower()
+        if role in ("assistant", "ai", "bot") and (h.get("content") or "").strip():
+            return True
+    return False
+
+
+def _history_has_marker(history: Optional[List[Dict]], markers: Tuple[str, ...]) -> bool:
+    blob = _assistant_blob(history)
+    return any(m in blob for m in markers)
+
+
+def _count_assistant_asks_for_data(history: Optional[List[Dict]], data_id: str) -> int:
+    pattern = DATA_ASK_PATTERNS.get(data_id)
+    if not pattern:
+        return 0
+    count = 0
+    for h in history or []:
+        role = (h.get("role") or "").lower()
+        if role not in ("assistant", "ai", "bot"):
+            continue
+        if re.search(pattern, (h.get("content") or ""), re.I):
+            count += 1
+    return count
+
+
+def _user_answered_after_ask(history: Optional[List[Dict]], data_id: str) -> bool:
+    """True si el usuario respondió tras una pregunta del asistente sobre ese dato."""
+    pattern = DATA_ASK_PATTERNS.get(data_id)
+    if not pattern:
+        return False
+    asked_pending = False
+    for h in history or []:
+        role = (h.get("role") or "").lower()
+        content = h.get("content") or ""
+        if role in ("assistant", "ai", "bot"):
+            if re.search(pattern, content, re.I):
+                asked_pending = True
+        elif role == "user" and asked_pending:
+            if re.search(pattern, content, re.I) or len(content.strip()) > 12:
+                return True
+            asked_pending = False
+    return False
+
+
+def _compute_evaded_topics(
+    critical_items: List[Dict[str, Any]],
+    history: Optional[List[Dict]] = None,
+) -> List[str]:
+    evaded = []
+    for item in critical_items:
+        if item.get("collected"):
+            continue
+        data_id = item["id"]
+        asks = _count_assistant_asks_for_data(history, data_id)
+        if asks >= 2 and not _user_answered_after_ask(history, data_id):
+            evaded.append(data_id)
+    return evaded
+
+
+def _pick_focus_data_id(
+    critical_items: List[Dict[str, Any]],
+    evaded_topics: List[str],
+) -> Optional[str]:
+    for item in critical_items:
+        if item.get("collected"):
+            continue
+        if item["id"] in evaded_topics:
+            continue
+        return item["id"]
+    for item in critical_items:
+        if not item.get("collected"):
+            return item["id"]
+    return None
+
+
+def _is_expert_fast_path(
+    present: int,
+    total: int,
+    history: Optional[List[Dict]] = None,
+) -> bool:
+    return present >= total and not _history_has_assistant_turn(history)
+
+
+def _resolve_coaching_phase(
+    *,
+    sparse: bool,
+    has_pdf: bool,
+    blob: str,
+    present: int,
+    total: int,
+    completeness: int,
+    history: Optional[List[Dict]] = None,
+) -> Tuple[CoachingPhase, bool]:
+    expert = _is_expert_fast_path(present, total, history)
+    has_risk = _history_has_marker(history, RISK_HISTORY_MARKERS)
+    has_orient = _history_has_marker(history, ORIENT_HISTORY_MARKERS)
+    problem_entity = _has_problem_signal(blob) and _has_entity_signal(blob)
+    has_location = _has_location_signal(blob)
+
+    if expert and not has_risk:
+        return CoachingPhase.EVALUAR_RIESGO, True
+    if has_pdf and present >= 3 and not sparse:
+        if not problem_entity:
+            return CoachingPhase.DIAGNOSTICAR, False
+        if not has_location:
+            return CoachingPhase.DIAGNOSTICAR, False
+        if present < 5:
+            return CoachingPhase.RECOPILAR, False
+    if sparse and not has_pdf and not problem_entity:
+        return CoachingPhase.DESCUBRIR, False
+    if not problem_entity:
+        return CoachingPhase.DIAGNOSTICAR, False
+    if not has_location:
+        return CoachingPhase.DIAGNOSTICAR, False
+    if present < 5:
+        return CoachingPhase.RECOPILAR, False
+    if not has_risk:
+        return CoachingPhase.EVALUAR_RIESGO, False
+    if completeness < 70:
+        return CoachingPhase.RECOPILAR, expert
+    if not has_orient:
+        return CoachingPhase.ORIENTAR, expert
+    return CoachingPhase.CONSOLIDAR, expert
+
+
+def _build_nodes_visited(
+    phase: CoachingPhase,
+    profile: UserProfileState,
+    has_pdf: bool,
+    *,
+    role_mode: str = "plan",
+    session_locked: bool = False,
+) -> List[str]:
+    visited = ["gate_legal"]
+    if role_mode == "chat" and not session_locked:
+        visited.append("role_detect")
+        return visited
+    visited.append("role_detect")
+    if session_locked:
+        visited.append("session_lock")
     if profile.completeness_pct > 0:
         visited.append("profile_collect")
     if profile.completeness_pct >= 40:
@@ -828,6 +1026,9 @@ def assess_guide_state(
     history: Optional[List[Dict]] = None,
     *,
     has_pdf: bool = False,
+    input_mode: str = "plan",
+    audit_session: bool = False,
+    legal_gate: str = "passed",
 ) -> GuideState:
     blob = _combined_text(text, history)
     collected, gaps, critical_items = detect_critical_items(text, history)
@@ -841,35 +1042,42 @@ def assess_guide_state(
     user_only = " ".join(user_parts)
     sparse = _word_count(user_only) <= 30 and not has_pdf
 
-    if sparse and not DISCOVERY_KEYWORDS.search(blob):
-        phase = CoachingPhase.DESCUBRIR
-    elif sparse:
-        phase = CoachingPhase.DESCUBRIR
-    elif not (_has_problem_signal(blob) and _has_entity_signal(blob)):
-        phase = CoachingPhase.DIAGNOSTICAR
-    elif present < 5:
-        phase = CoachingPhase.RECOPILAR
-    elif present >= 5 and completeness < 70:
-        phase = CoachingPhase.EVALUAR_RIESGO
-    elif completeness >= 70:
-        phase = CoachingPhase.CONSOLIDAR
-    else:
-        phase = CoachingPhase.ORIENTAR
+    role_mode = input_mode if input_mode in ("chat", "plan", "audit") else "plan"
+    if audit_session and role_mode == "chat":
+        role_mode = "audit"
 
+    phase, expert_fast_path = _resolve_coaching_phase(
+        sparse=sparse,
+        has_pdf=has_pdf,
+        blob=blob,
+        present=present,
+        total=total,
+        completeness=completeness,
+        history=history,
+    )
+
+    evaded_topics = _compute_evaded_topics(critical_items, history)
+    focus_data_id = _pick_focus_data_id(critical_items, evaded_topics)
+
+    has_risk = _history_has_marker(history, RISK_HISTORY_MARKERS)
     pdf_ready = (
         completeness >= 70
         and present >= 5
-        and phase.value >= CoachingPhase.EVALUAR_RIESGO.value
+        and has_risk
+        and phase == CoachingPhase.CONSOLIDAR
     )
 
     current_node_id = PHASE_NODE_ID[phase]
-    nodes_visited = _build_nodes_visited(phase, profile, has_pdf)
+    nodes_visited = _build_nodes_visited(
+        phase,
+        profile,
+        has_pdf,
+        role_mode=role_mode,
+        session_locked=audit_session,
+    )
     nodes_active = [current_node_id]
-    if phase == CoachingPhase.RECOPILAR:
-        for item in critical_items:
-            if not item["collected"]:
-                nodes_active.append(f"data_{item['id']}")
-                break
+    if phase == CoachingPhase.RECOPILAR and focus_data_id:
+        nodes_active.append(f"data_{focus_data_id}")
 
     sectors = detect_sector(text, history)
     programs = recommend_programs(text, history) if phase.value >= CoachingPhase.DIAGNOSTICAR.value else []
@@ -890,7 +1098,7 @@ def assess_guide_state(
         critical_items=critical_items,
         pdf_ready=pdf_ready,
         is_sparse_input=sparse,
-        risk_required=phase.value >= CoachingPhase.EVALUAR_RIESGO.value,
+        risk_required=phase.value >= CoachingPhase.EVALUAR_RIESGO.value or present >= 5,
         current_node_id=current_node_id,
         profile=profile,
         nodes_visited=nodes_visited,
@@ -898,6 +1106,12 @@ def assess_guide_state(
         mentor_message=_mentor_message_for_phase(phase, profile, gaps, pdf_ready),
         recommended_programs=programs,
         detected_sectors=sectors,
+        role_mode=role_mode,
+        legal_gate=legal_gate,
+        session_locked=audit_session,
+        expert_fast_path=expert_fast_path,
+        focus_data_id=focus_data_id,
+        evaded_topics=evaded_topics,
     )
 
 
@@ -928,7 +1142,7 @@ def build_graph_visualization(state: GuideState) -> Dict[str, Any]:
         })
 
     return {
-        "version": "3.0-programs",
+        "version": "4.0-roots",
         "current_node_id": state.current_node_id,
         "phase": state.phase.value,
         "phase_name": state.phase_name,
@@ -936,6 +1150,12 @@ def build_graph_visualization(state: GuideState) -> Dict[str, Any]:
         "profile_completeness_pct": state.profile.completeness_pct,
         "pdf_ready": state.pdf_ready,
         "mentor_message": state.mentor_message,
+        "role_mode": state.role_mode,
+        "legal_gate": state.legal_gate,
+        "session_locked": state.session_locked,
+        "expert_fast_path": state.expert_fast_path,
+        "focus_data_id": state.focus_data_id,
+        "evaded_topics": state.evaded_topics,
         "nodes": nodes,
         "critical_items": state.critical_items,
         "profile": state.profile.to_dict(),
@@ -991,6 +1211,17 @@ def guide_phase_instruction(
 
     institutional_context = build_research_context_hint(text, history)
 
+    evasion_hint = ""
+    if state.evaded_topics:
+        evasion_hint = (
+            f"\nDATOS EVADIDOS (preguntados ≥2 veces sin respuesta): "
+            f"{', '.join(state.evaded_topics)}. "
+            "Explica brevemente la consecuencia en el índice MEF y pasa al siguiente hueco."
+        )
+    focus_hint = ""
+    if state.focus_data_id:
+        focus_hint = f"\nFOCO ACTIVO F2: data_{state.focus_data_id} — máximo 1-2 preguntas sobre este dato."
+
     base = f"""
 ═══════════════════════════════════════════════════════════════
 GRAFO SUPREMO CEDIT — Nodo: {state.current_node_id} | Fase: {state.phase_name}
@@ -998,7 +1229,7 @@ Completitud expediente: {state.critical_present}/{state.critical_total} ({state.
 Perfil usuario: {state.profile.completeness_pct}%.
 Datos críticos faltantes: {", ".join(state.data_gaps) if state.data_gaps else "ninguno"}.
 Sectores detectados: {", ".join(state.detected_sectors)}.
-{profile_hint}{programs_context}{institutional_context}
+{profile_hint}{programs_context}{institutional_context}{evasion_hint}{focus_hint}
 ═══════════════════════════════════════════════════════════════
 
 ▓▓▓ VOZ DE GUÍA TRANSPARENTE (orden sagrado del mensaje) ▓▓▓

@@ -967,6 +967,7 @@ def _escape_langchain_system_template(text: str, allowed_vars: Optional[Tuple[st
 
 AGENT_MIND_FULL_FILES = [
     "master.md",
+    "decision_roots.md",
     "soul.md",
     "soul_extended.md",
     "instinct.md",
@@ -1610,7 +1611,13 @@ def run_chat(
         )
     guide_state = None
     if mode in ("audit", "plan"):
-        guide_state = assess_guide_state(message, history, has_pdf=False)
+        guide_state = assess_guide_state(
+            message,
+            history,
+            has_pdf=False,
+            input_mode=mode,
+            audit_session=audit_session,
+        )
         prefix_instructions += "\n\n[FASE GRAFO — OBEDECE ESTAS RESTRICCIONES]\n" + guide_phase_instruction(
             guide_state, message, history
         )
@@ -1671,7 +1678,13 @@ def run_chat(
     }
     if response_mode == "audit" or mode in ("audit", "plan"):
         if guide_state is None:
-            guide_state = assess_guide_state(message, history, has_pdf=False)
+            guide_state = assess_guide_state(
+                message,
+                history,
+                has_pdf=False,
+                input_mode=mode,
+                audit_session=audit_session,
+            )
         gaps = detect_project_data_gaps(content, history)
         if guide_state.phase.value < CoachingPhase.EVALUAR_RIESGO.value:
             content = append_followup_questions(content, gaps)
@@ -1734,7 +1747,13 @@ def run_audit_pdf(
         user_text or "auditoría plan inversión pública MEF Invierte.pe",
     ]
     contexto = _cap_rag_context(_gather_normative_context([q for q in rag_queries if q], k=3))
-    guide_state = assess_guide_state(text, history, has_pdf=True)
+    guide_state = assess_guide_state(
+        text,
+        history,
+        has_pdf=True,
+        input_mode="audit",
+        audit_session=True,
+    )
 
     user_note = f"\nComentario del usuario: {user_text}" if user_text.strip() else ""
     pregunta = (
