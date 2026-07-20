@@ -573,24 +573,55 @@ def _log(msg: str) -> None:
 
 
 _vectorstore: Optional[PineconeVectorStore] = None
+_vectorstore_disabled = False
 _vectorstore_lock = __import__("threading").Lock()
 
 
-def get_vectorstore() -> PineconeVectorStore:
+def get_vectorstore() -> Optional[PineconeVectorStore]:
     """Carga embeddings + Pinecone solo al primer uso (uvicorn escucha antes en Fly)."""
-    global _vectorstore
+    global _vectorstore, _vectorstore_disabled
+    if _vectorstore_disabled:
+        return None
     if _vectorstore is not None:
         return _vectorstore
     with _vectorstore_lock:
+        if _vectorstore_disabled:
+            return None
         if _vectorstore is None:
-            _log("[CEDIT] Cargando embeddings y Pinecone...")
-            model = os.getenv(
-                "CEDIT_EMBEDDING_MODEL",
-                "sentence-transformers/all-mpnet-base-v2",
-            )
-            embeddings = HuggingFaceEmbeddings(model_name=model)
-            _vectorstore = PineconeVectorStore(index_name="agenteautonomo-ortiz", embedding=embeddings)
+            if not (os.getenv("PINECONE_API_KEY") or "").strip():
+                _log("[CEDIT] AVISO: falta PINECONE_API_KEY — chat sin RAG normativo")
+                _vectorstore_disabled = True
+                return None
+            try:
+                _log("[CEDIT] Cargando embeddings y Pinecone...")
+                model = os.getenv(
+                    "CEDIT_EMBEDDING_MODEL",
+                    "sentence-transformers/all-mpnet-base-v2",
+                )
+                embeddings = HuggingFaceEmbeddings(model_name=model)
+                _vectorstore = PineconeVectorStore(
+                    index_name=os.getenv("PINECONE_INDEX_NAME", "agenteautonomo-ortiz"),
+                    embedding=embeddings,
+                )
+            except Exception as exc:
+                _log(f"[CEDIT] AVISO: Pinecone no disponible ({exc}) — chat sin RAG")
+                _vectorstore_disabled = True
+                return None
     return _vectorstore
+
+
+def rag_similarity_search(query: str, k: int = 2) -> List[Any]:
+    """Búsqueda RAG; lista vacía si no hay Pinecone o k<=0."""
+    if k <= 0:
+        return []
+    vs = get_vectorstore()
+    if vs is None:
+        return []
+    try:
+        return vs.similarity_search(query, k=k)
+    except Exception as exc:
+        _log(f"[CEDIT] AVISO: fallo RAG ({exc})")
+        return []
 
 GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 # Respaldo con cuota distinta (Scout ~1K req/día; 8B ~14K req/día en free tier Groq).
@@ -1393,7 +1424,7 @@ def _gather_normative_context(queries: List[str], k: int = 2) -> str:
     for q in queries:
         if not q or len(q) < 20:
             continue
-        for doc in get_vectorstore().similarity_search(q[:1500], k=k):
+        for doc in rag_similarity_search(q[:1500], k=k):
             snippet = doc.page_content.strip()
             key = snippet[:120]
             if key not in seen:
@@ -1555,7 +1586,7 @@ def run_chat(
     if not skip_usage and billable:
         check_freemium(scope, "audit")
 
-    docs = get_vectorstore().similarity_search(message, k=GROQ_RAG_K)
+    docs = rag_similarity_search(message, k=GROQ_RAG_K)
     contexto = _cap_rag_context("\n\n".join([d.page_content for d in docs]))
 
     prefix_instructions = cedit_identity_instruction(history, message, locale)
@@ -1791,7 +1822,7 @@ def run_refine_plan(
         f"Cumple normativa MEF e Invierte.pe.\n"
         f"{cedit_identity_instruction(history, user_request)}\n{AUDIT_STRUCTURE_INSTRUCTION}"
     )
-    docs = get_vectorstore().similarity_search(user_request, k=3)
+    docs = rag_similarity_search(user_request, k=3)
     contexto = "\n\n".join([d.page_content for d in docs])
     messages = prompt.format_messages(
         context=contexto,

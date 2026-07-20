@@ -1,15 +1,8 @@
 import React from 'react';
 import { useI18n } from '../i18n/I18nContext';
+import { ensureGuideGraphNodes, GUIDE_PIPELINE_NODES } from '../utils/auditDecisionPoints';
 
-const MAIN_NODE_IDS = [
-  'f0_descubrir',
-  'f1_diagnosticar',
-  'f2_recopilar',
-  'f3_riesgo',
-  'f4_orientar',
-  'f5_consolidar',
-  'pdf_generate',
-];
+const MAIN_NODE_IDS = GUIDE_PIPELINE_NODES.map((n) => n.id);
 
 const statusStyles = {
   completed: {
@@ -40,9 +33,12 @@ const statusStyles = {
 
 const GuideGraphTrail = ({ graph, className = '' }) => {
   const { t } = useI18n();
-  if (!graph?.nodes?.length) return null;
+  if (!graph) return null;
 
-  const nodeMap = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
+  const nodes = ensureGuideGraphNodes(graph);
+  if (!nodes.length && graph.completeness_pct == null && !graph.mentor_message) return null;
+
+  const nodeMap = Object.fromEntries(nodes.map((n) => [n.id, n]));
   const mainNodes = MAIN_NODE_IDS.map((id) => nodeMap[id]).filter(Boolean);
   const criticalItems = graph.critical_items || [];
   const profileItems = graph.profile?.items || [];

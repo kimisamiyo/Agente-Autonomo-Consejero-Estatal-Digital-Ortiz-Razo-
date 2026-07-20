@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import GuideGraphTrail from './GuideGraphTrail';
 import { useI18n } from '../i18n/I18nContext';
-import { isEarlyGuidePhase } from '../utils/pdfEligibility';
 
 /**
  * Panel colapsable en el header (junto a la red de decisiones): expediente, grafo y datos PDF.
@@ -35,7 +34,6 @@ const MentorInsightPanel = ({
   const phase = guidePhase || guideGraph?.phase_name || '';
   const expedientePct = guideGraph?.completeness_pct ?? mefScore?.document_only_index ?? 0;
   const mentorLine = (guideGraph?.mentor_message || '').slice(0, 100);
-  const early = isEarlyGuidePhase({ guidePhase: phase, guideGraph });
   const hasPanelBody = Boolean(panelMarkdown?.trim() || guideGraph);
 
   useEffect(() => {
@@ -48,7 +46,7 @@ const MentorInsightPanel = ({
 
   return (
     <div
-      className={`rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden h-full flex flex-col ${
+      className={`rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden flex flex-col ${
         pulse ? 'cedit-network-pulse-light' : ''
       }`}
     >
@@ -87,9 +85,16 @@ const MentorInsightPanel = ({
             </div>
           )}
           {guideGraph && <GuideGraphTrail graph={guideGraph} className="!p-3" />}
-          {mefScore && early && (
+          {mefScore && (
             <p className="text-[10px] text-slate-500 px-2 py-1.5 rounded-lg bg-slate-50 border border-slate-100">
-              {t('mef.title')}: {mefScore.document_only_index ?? 0}% · {t('guide.phase')} {phase}
+              {t('mef.title')}: {mefScore.document_only_index ?? 0}%
+              {mefScore.risk_index != null ? ` · riesgo ${mefScore.risk_index}%` : ''}
+              {phase ? ` · ${t('guide.phase')} ${phase}` : ''}
+            </p>
+          )}
+          {!panelMarkdown?.trim() && !guideGraph && !mefScore && (
+            <p className="text-[11px] text-slate-500 px-2 py-4 text-center">
+              {t('chat.mentorPanelExpand')}
             </p>
           )}
         </div>

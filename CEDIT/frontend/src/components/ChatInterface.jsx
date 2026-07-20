@@ -106,8 +106,9 @@ const ChatInterface = ({
   const [generatingPdf, setGeneratingPdf] = useState(null);
   const [pdfGenPhase, setPdfGenPhase] = useState(null);
   const [pdfLangModal, setPdfLangModal] = useState({ open: false, msg: null, index: null });
-  /** 'network' | 'mentor' | null — solo un panel del header abierto a la vez */
-  const [headerPanelOpen, setHeaderPanelOpen] = useState(null);
+  /** Ambos paneles del header pueden estar abiertos a la vez */
+  const [networkExpanded, setNetworkExpanded] = useState(false);
+  const [mentorExpanded, setMentorExpanded] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const mentorPanelRef = useRef(null);
@@ -186,7 +187,8 @@ const ChatInterface = ({
   const showPlanHeader = showDecisionNetwork || showMentorHeader;
 
   useEffect(() => {
-    setHeaderPanelOpen(null);
+    setNetworkExpanded(false);
+    setMentorExpanded(false);
   }, [latestMentorInsight?.index]);
 
   const getPdfLockReason = (msg) => {
@@ -493,27 +495,25 @@ const ChatInterface = ({
       {showPlanHeader && (
         <div className="shrink-0 w-full px-3 sm:px-5 py-2.5 border-b border-slate-200 bg-white z-10">
           <div
-            className={`w-full max-w-[min(1440px,100%)] mx-auto flex gap-3 items-stretch min-h-[56px] ${
+            className={`w-full max-w-[min(1440px,100%)] mx-auto flex gap-3 items-start min-h-[56px] ${
               showDecisionNetwork && showMentorHeader ? 'flex-col lg:flex-row' : 'flex-col'
             }`}
           >
             {showDecisionNetwork && (
-              <div className={showMentorHeader ? 'lg:flex-1 min-w-0' : 'w-full'}>
+              <div className={showMentorHeader ? 'lg:flex-1 min-w-0 w-full' : 'w-full'}>
                 <AuditDecisionNetwork
                   checkpoints={decisionCheckpoints}
-                  positions={nodePositions}
                   activeCheckpointId={activeCheckpointId}
                   onRestore={handleRestoreCheckpoint}
-                  onPositionChange={onNodePositionChange}
-                  expanded={headerPanelOpen === 'network'}
-                  onExpandedChange={(open) => setHeaderPanelOpen(open ? 'network' : null)}
+                  expanded={networkExpanded}
+                  onExpandedChange={setNetworkExpanded}
                 />
               </div>
             )}
             {showMentorHeader && (
               <div
                 ref={mentorPanelRef}
-                className={showDecisionNetwork ? 'lg:flex-1 min-w-0 min-h-[56px]' : 'w-full'}
+                className={showDecisionNetwork ? 'lg:flex-1 min-w-0 w-full' : 'w-full'}
               >
                 <MentorInsightPanel
                   messageKey={latestMentorInsight.index}
@@ -521,8 +521,8 @@ const ChatInterface = ({
                   guideGraph={latestMentorInsight.msg.guideGraph}
                   mefScore={latestMentorInsight.msg.mefScore}
                   guidePhase={latestMentorInsight.msg.guidePhase}
-                  expanded={headerPanelOpen === 'mentor'}
-                  onExpandedChange={(open) => setHeaderPanelOpen(open ? 'mentor' : null)}
+                  expanded={mentorExpanded}
+                  onExpandedChange={setMentorExpanded}
                 />
               </div>
             )}

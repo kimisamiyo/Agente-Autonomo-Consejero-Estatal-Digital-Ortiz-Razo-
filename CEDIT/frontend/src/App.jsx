@@ -32,7 +32,8 @@ import {
 import { postChatMessage, formatChatError } from './utils/chatApi';
 import {
   appendCheckpoint,
-  pruneCheckpointsAfter,
+  ensureDecisionCheckpoints,
+  forkCheckpointsAt,
   shouldCreateCheckpoint,
   trimCheckpointForStorage,
 } from './utils/auditDecisionPoints';
@@ -90,15 +91,22 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+function hydrateChat(chat) {
+  const decisionCheckpoints = ensureDecisionCheckpoints(chat);
+  return { ...chat, decisionCheckpoints };
+}
+
 function initWorkspace() {
   const saved = loadWebWorkspace();
   if (saved?.chats?.length && saved.activeChatId) {
-    const active = saved.chats.find((c) => c.id === saved.activeChatId) || saved.chats[0];
-    return { chats: saved.chats, active };
+    const chats = saved.chats.map(hydrateChat);
+    const active = chats.find((c) => c.id === saved.activeChatId) || chats[0];
+    const lastCp = [...(active.decisionCheckpoints || [])].filter((c) => !c.abandoned).pop();
+    return { chats, active, activeCheckpointId: lastCp?.id || null };
   }
   const id = newConversationId();
   const chat = createEmptyChat(id);
-  return { chats: [chat], active: chat };
+  return { chats: [chat], active: chat, activeCheckpointId: null };
 }
 
 function App() {
@@ -113,7 +121,9 @@ function App() {
     initial.current.active.decisionCheckpoints || []
   );
   const [nodePositions, setNodePositions] = useState(initial.current.active.nodePositions || {});
-  const [activeCheckpointId, setActiveCheckpointId] = useState(null);
+  const [activeCheckpointId, setActiveCheckpointId] = useState(
+    initial.current.activeCheckpointId || null
+  );
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -300,14 +310,17 @@ function App() {
       const premiumWs = loadPremiumWorkspace(walletKey);
       if (premiumWs?.chats?.length) {
         skipWorkspaceSyncRef.current = true;
-        const active = premiumWs.chats.find((c) => c.id === premiumWs.activeChatId) || premiumWs.chats[0];
-        setChats(premiumWs.chats);
+        const hydratedChats = premiumWs.chats.map(hydrateChat);
+        const active = hydratedChats.find((c) => c.id === premiumWs.activeChatId) || hydratedChats[0];
+        const lastCp = [...(active.decisionCheckpoints || [])].filter((c) => !c.abandoned).pop();
+        setChats(hydratedChats);
         setConversationId(active.id);
         setMessages(active.messages || []);
         setSessionMode(active.sessionMode || 'chat');
         setBlockchainHash(active.blockchainHash || null);
         setDecisionCheckpoints(active.decisionCheckpoints || []);
         setNodePositions(active.nodePositions || {});
+        setActiveCheckpointId(lastCp?.id || null);
       } else {
         await applyChainRestore(walletKey);
       }
@@ -372,14 +385,16 @@ function App() {
 
   const loadChat = useCallback(
     (chat) => {
-      setConversationId(chat.id);
-      setMessages(chat.messages || []);
-      setSessionMode(chat.sessionMode || 'chat');
-      setBlockchainHash(chat.blockchainHash || null);
-      setDecisionCheckpoints(chat.decisionCheckpoints || []);
-      setNodePositions(chat.nodePositions || {});
-      setActiveCheckpointId(null);
-      persistWorkspace(chats, chat.id);
+      const hydrated = hydrateChat(chat);
+      const lastCp = [...(hydrated.decisionCheckpoints || [])].filter((c) => !c.abandoned).pop();
+      setConversationId(hydrated.id);
+      setMessages(hydrated.messages || []);
+      setSessionMode(hydrated.sessionMode || 'chat');
+      setBlockchainHash(hydrated.blockchainHash || null);
+      setDecisionCheckpoints(hydrated.decisionCheckpoints || []);
+      setNodePositions(hydrated.nodePositions || {});
+      setActiveCheckpointId(lastCp?.id || null);
+      persistWorkspace(chats, hydrated.id);
     },
     [chats, persistWorkspace]
   );
@@ -437,17 +452,23 @@ function App() {
   const restoreToCheckpoint = useCallback(
     (cp) => {
       if (!cp || cp.messageIndex == null) return;
-      const trimmed = messages.slice(0, cp.messageIndex + 1);
+      // Rama abandonada: vuelve al punto de bifurcación sin borrar otras ramas
+      const target =
+        cp.abandoned && cp.forkFromId
+          ? decisionCheckpoints.find((c) => c.id === cp.forkFromId) || cp
+          : cp;
+      if (target.abandoned) return;
+
+      const trimmed = messages.slice(0, target.messageIndex + 1);
       setMessages(trimmed);
-      setSessionMode(cp.sessionMode || 'audit');
-      setDecisionCheckpoints((prev) =>
-        pruneCheckpointsAfter(prev, cp.messageIndex).map(trimCheckpointForStorage)
-      );
-      setActiveCheckpointId(cp.id);
+      setSessionMode(target.sessionMode || 'audit');
+      const forked = forkCheckpointsAt(decisionCheckpoints, target).map(trimCheckpointForStorage);
+      setDecisionCheckpoints(forked);
+      setActiveCheckpointId(target.id);
       syncChatsWithActive({
         messages: trimmed,
-        sessionMode: cp.sessionMode || 'audit',
-        decisionCheckpoints: pruneCheckpointsAfter(decisionCheckpoints, cp.messageIndex),
+        sessionMode: target.sessionMode || 'audit',
+        decisionCheckpoints: forked,
       });
     },
     [messages, decisionCheckpoints, syncChatsWithActive]
